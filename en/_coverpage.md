@@ -1,8 +1,8 @@
-# Zeroized的博客
+# Zeroized`s Blog
 
 > It is never too late to learn
 
-- 机器学习，深度学习&推荐系统
+- Machine Learning, Deep Learning and Recommender System
 
 [DeepRec-torch](https://github.com/zeroized/DeepRec-torch)
-[博客主页](#Zeroized)
+[Blog](#Zeroized)
