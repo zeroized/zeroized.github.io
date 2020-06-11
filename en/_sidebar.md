@@ -1,3 +1,3 @@
 <!-- sidebar.md -->
-* [Home](/)
-* [Guide](guide.md)
+* [Home](/en/)
+* [Preface](/en/preface.md)
