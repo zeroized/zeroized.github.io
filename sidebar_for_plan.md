@@ -11,7 +11,7 @@
 * **深度学习中的特征交叉**
     * [综述篇——从LR到FLEN的进化与演变](/feat-cross/summary.md)
     * [FNN](/feat-cross/fnn.md)
-    * [PNN](/feat-cross/pnn.md)
+    * [PNN：类别特征交叉还不够，要每一维都交叉](/feat-cross/pnn.md)
     * [Wide & Deep Network]()
     * [DCN]()
     * [DeepFM]()
