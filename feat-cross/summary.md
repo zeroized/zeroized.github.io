@@ -85,7 +85,7 @@ NFM把交叉好的特征全部加起来然后放到神经网络里，其学习�
 深度网络使得交叉特征的维度有更多不同的组合方式；
 而AFM则关注不同交叉特征之间的重要性，使用Attention对其进行加权，其pair-wise interaction layer中的$p$可以看作是对交叉特征每个维度的权重。
 
-FM算法门庭若市，而FFM则门可罗雀。ONN（Operation-aware Neural Network）[12]是少有的FFM思想衍生出的模型。
+FM算法门庭若市，而FFM则门可罗雀。ONN（Operation-aware Neural Network，也有叫NFFM的）[12]是少有的FFM思想衍生出的模型。
 ONN对每一个特征产生多个embedding，一份embedding属于自己，其他每一个embedding对应与不同特征的交叉，然后把embedding和交叉特征一起放到深度模型里去学习。
 但从模型的整体角度来看，ONN更像是PNN的一种变体，只是使用FFM对其embedding层和product层进行了改造。
 
@@ -149,7 +149,7 @@ Wide和Deep部分在最后输出决策的地方加权融合，采用一种相互
 
 事物的发展是前进性与曲折性的统一。（指借鉴别的算法的优点来获得AUC的提升（不是
 
-#### 领域内的自我升华
+#### 自我升华
 
 2017年的DeepFM和DCN（Deep & Cross Network）[13]可以说是集多个前辈之长的成果了。
 
@@ -160,7 +160,7 @@ NFM走了PNN的路子，把FM特征交叉直接接上深度模型；而DeepFM则
 这种利用Wide优化Deep的思路是到目前为止笔者觉得做的最好的两个之一（另一个就是集大成者FM），相比其前辈所用的“制衡”的方式要前进了一大步。
 
 DCN作为Wide & Deep Network的正统续作，从PNN那里取了经：把Wide部分改成了一个多次交叉的Cross Network。
-在Cross Network每一层进行特征交叉时，借鉴了ResNet的思想（见DCN参考文献5），
+在Cross Network每一层进行特征交叉时，借鉴了ResNet的思想（见DCN参考文献5）（鉴于这里并不是直接把一阶线性结果放到输出层里计算，笔者就不吐槽这一点了），
 用上一层的交叉特征与原始特征进行外积交叉，使原始特征信息能够一直传递到最后的输出层。
 
 2018年的xDeepFM[14]虽然名字叫xDeepFM，但是他其实是DCN的进化版。
@@ -168,6 +168,40 @@ DCN作为Wide & Deep Network的正统续作，从PNN那里取了经：把Wide部
 将DCN中的外积换成了element-wise乘法（Hadamard积）。还有一个不同之处是，CIN没有直接把最后一层输出到输出层里进行计算，
 而是对每个特征交叉层进行了一个Compress操作，把每一层中的交叉向量利用和池化压缩成一个数值，然后再把每一层拼接起来输出到最后的输出层中。
 
+#### 西天取经
+
+AutoInt[15]从Transformer里取到了经，在AFM的基础上改成用Multi-head Self-Attention来做交互：
+在Attention网络的Key、Query、Value中，把每一个特征的嵌入向量依次作为Query，
+和其他特征的嵌入向量进行交叉（使用的是内积）得到attention signal，接着就是比较常规的加权求和的attention基本操作了。
+此外，作者也提到了直接把embedding放到输出层一起计算是借鉴了ResNet的思想，
+但把一阶线性结果放到输出层应该是从LR流传下来的老传统了，笔者觉得这在写法上有取巧的意味（指参考ResNet思想显得高大上）。
+
+从笔者的角度来看，AutoInt算是一个比较成功的跨界模型案例了。Transformer已经出来那么多年了，
+到现在才刚有把Transformer移植到目标检测上的成功案例，在其他的移植场景下鲜有特别好的模型成果。
+
+#### 温故而知新
+
+FLEN[16]这次又回归了Wide & Deep的模型结构（说到这里大家已经知道Deep不会讲了，而模型的另一大贡献是）。
+FLEN在embedding部分采用了field-wise的策略，对每一个域（user，item，context等等）建立一个embedding向量，
+这个embedding向量是域内部所有embedding的和池化结果。
+FLEN在名为Field-wise Bi-interaction的特征交叉部分用了三种不同的特征交叉策略：
+- S子模块：对原始输入特征进行交叉（LR模型的一阶部分）
+- MF子模块：对域间特征进行交叉，对field-wise特征级别的Bi-intercation，只考虑field之间的交叉（field-wise嵌入向量交叉）
+- FM子模块：对域内特征进行交叉，对特征级别的Bi-interaction，本质上是考虑field内每个特征的交叉，但因为field-wise嵌入是每个特征embedding的和池化，所以可以方便地使用FM的化简计算形式进行域内的特征交叉。
+目的是为了解决嵌入向量的梯度耦合问题：特征a在FM计算过程中，其嵌入向量和其他特征进行交叉（内积），
+导致a的嵌入向量在BP时得到的梯度与其他特征的嵌入向量耦合在了一起。
+FLEN将特征之间的交互变成了域内+域外的交互，缓解了梯度耦合的问题，从形式上可以看作是NFM中Bi-interaction的泛化；
+另一方面，在element-wise product时作dropout来缓解梯度耦合（DiceFactor部分），也是FLEN的一大创新点（特征交叉终于也吃上了dropout，真香）。
+
+## 小结
+
+从LR开始到FLEN，跨度不大的十几年出现了以vector-wise和dot-wise为核心思路的两种特征交互方式，
+而落到具体的交叉计算方法更是五花八门，每个模型有自己的特点和长处。
+在引入“外来文化”方面，Attention及其衍生是比较成功的（其实笔者觉得Attention到哪都能成功），
+尤其是其根据Key和Query生成权重的方式，其实就是vector-wise特征交叉，与这一块天生契合。
+
+花了3天时间，又查了很多资料，终于是把笔者多年来看过、思考过和复现过的东西汇总成了一篇小综述。
+为了能让读者产生一些概念性的认识，尽可能地没有放公式，在后续对每个模型的详解中会对文章中提到的公式进行详细的分析。
 
 ## 参考文献
 1. Simple and Scalable Response Prediction for Display Advertising
@@ -184,3 +218,12 @@ DCN作为Wide & Deep Network的正统续作，从PNN那里取了经：把Wide部
 12. Operation-aware Neural Networks for User Response Prediction
 13. Deep & Cross Network for Ad Click Predictions
 14. xDeepFM: Combining Explicit and Implicit Feature Interactions for Recommender Systems
+15. AutoInt: Automatic Feature Interaction Learning via Self-Attentive Neural Networks
+16. FLEN: Leveraging Field for Scalable CTR Prediction
+
+## Changelog
+2020/06/13：完成正文第一章
+
+2020/06/14：完成正文第二章
+
+2020/06/15：完成正文第三章及结语
