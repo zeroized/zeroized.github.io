@@ -8,6 +8,8 @@
     <meta name="viewport"
           content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
     <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify/lib/themes/vue.css">
+    <link rel="stylesheet" href="https://unpkg.com/docsify-toc@1.0.0/dist/toc.css">
+    <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/katex@latest/dist/katex.min.css"/>
     <style>
         .markdown-section {
             margin: 0 auto;
@@ -20,10 +22,15 @@
             text-align: justify;
             text-justify: inter-ideograph
         }
+
+        .content {
+            display: block;
+        }
     </style>
 </head>
 <body>
 <div id="app"></div>
+<div id="valine"></div>
 <script>
     window.$docsify = {
         name: 'Zeroized`s blog',
@@ -31,10 +38,11 @@
         loadSidebar: true,
         coverpage: ['/', '/en/'],
         loadNavbar: true,
-        toc: {
-            scope: '.markdown-section',
-            headings: 'h1, h2, h3, h4, h5, h6',
-            title: '内容导航',
+        subMaxLevel: 3,
+        Valine: {
+            appId: 's7gwt6pcoWTKWIz31vCRojcX-gzGzoHsz',
+            appKey: 'egi2wYVVkbeRKTWSWEW4Gl76',
+            visitor: true,
         }
     }
 </script>
@@ -43,9 +51,8 @@
 <!-- CDN files for docsify-katex -->
 <script src="//cdn.jsdelivr.net/npm/docsify-katex@latest/dist/docsify-katex.js"></script>
 <!-- or <script src="//cdn.jsdelivr.net/gh/upupming/docsify-katex@latest/dist/docsify-katex.js"></script> -->
-<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/katex@latest/dist/katex.min.css"/>
 
-<script src="https://unpkg.com/docsify-toc@1.0.0/dist/toc.js"></script>
-<link rel="stylesheet" href="https://unpkg.com/docsify-toc@1.0.0/dist/toc.css">
+<script src='//unpkg.com/valine/dist/Valine.min.js'></script>
+<script src="//unpkg.com/docsify-valine/dist/docsify-valine.min.js"></script>
 </body>
 </html>
