@@ -53,15 +53,16 @@
 <script src="//cdn.jsdelivr.net/npm/docsify/lib/plugins/gitalk.min.js"></script>
 <script src="//cdn.jsdelivr.net/npm/gitalk/dist/gitalk.min.js"></script>
 <script>
-  const gitalk = new Gitalk({
-    clientID: 'a9a2ba2b79a596c989c9',
-    clientSecret: '7ccf53995b71f9e55933c1e7dd6e6bab5c1cf90a',
-    repo: 'zeroized.github.io',
-    owner: 'zeroized',
-    admin: ['zeroized'],
-    // facebook-like distraction free mode
-    distractionFreeMode: false
-  })
+    const gitalk = new Gitalk({
+        clientID: 'a9a2ba2b79a596c989c9',
+        clientSecret: '7ccf53995b71f9e55933c1e7dd6e6bab5c1cf90a',
+        repo: 'zeroized.github.io',
+        owner: 'zeroized',
+        admin: ['zeroized'],
+        // facebook-like distraction free mode
+        distractionFreeMode: false,
+        createIssueManually: true
+    })
 </script>
 </body>
 </html>
