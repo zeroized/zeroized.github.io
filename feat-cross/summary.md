@@ -53,7 +53,7 @@ FFM是FM更为泛化的形式，FM可以看作是所有特征都是同一个fiel
 
 ### 当深度学习初遇特征交叉
 
-2016年注定不是平凡的一年，三大特征交叉的经典深度模型横空出世：FNN（Factorization-support Neural Netowrk）[6]、PNN（Product-based Neural Network）[7]和Wide & Deep Network[8]。这三个网络模型分别代表了深度学习与特征交叉初次结合时的三种方案：
+2016年注定不是平凡的一年，三大特征交叉的经典深度模型横空出世：FNN（Factorization-machine supported Neural Netowrk）[6]、PNN（Product-based Neural Network）[7]和Wide & Deep Network[8]。这三个网络模型分别代表了深度学习与特征交叉初次结合时的三种方案：
 - 预训练交叉->深度（后合并到交叉->深度）
 - 交叉->深度
 - 交叉&深度
