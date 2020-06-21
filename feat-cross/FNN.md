@@ -1,5 +1,5 @@
 # FNN: Factorization-machine supported Neural Network
-2020/6/19
+2020/06/19
 
 UCL & RayCloud（杭州）\[ECIR2016\][Deep Learning over Multi-field Categorical Data – A Case Study on User Response Prediction](https://arxiv.org/pdf/1601.02376.pdf)(ver. arXiv)
 
@@ -35,7 +35,7 @@ UCL & RayCloud（杭州）\[ECIR2016\][Deep Learning over Multi-field Categorica
 ![FNN模型结构](img/FNN_model_structure.png)
 <div style="text-align: center;">图1：FNN模型结构图</div>
 
-按照惯例，我们从输出层开始往输入开始看。
+按照惯例，我们从输出层开始往输入看。
 
 输出层是一个sigmoid输出，代表一个二分类结果（即预估CTR概率值）。
 
@@ -67,6 +67,8 @@ $$ l_1={\rm tanh}(W_1z+b_1) \tag{3} $$
 # 在__init__部分
 self.l2=nn.Linear(in_features=l1_dim,out_features=l2_dim,bias=True)
 self.l1=nn.Linear(in_features=z_dim,out_features=l1_dim,bias=True)
+nn.init.xavier_uniform_(self.l2.weight)
+nn.init.xavier_uniform_(self.l1.weight)
 # 使用MLP模块
 self.fc_layers=MLP(fc_dims=[l1_dim,l2_dim],in_dim=z_dim,dropout,batch_norm)
 
@@ -87,6 +89,7 @@ $$ z_i=W_0^i \cdot x[{\rm start}_i : {\rm end}_i]=(w_i,v_i^1,v_i^2,...,v_i^K) \t
 ```python
 # 在__init__部分
 self.emb_layer=nn.Embedding(num_embeddings=num_feats,embedding_dim=K+1)
+nn.init.xavier_uniform_(self.emb_layer.weight)
 
 # 在forward部分
 feat_emb=self.emb_layer(feat_index) # batch_size * num_fields * emb_dim
