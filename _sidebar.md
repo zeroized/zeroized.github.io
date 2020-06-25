@@ -5,6 +5,7 @@
     * [综述篇——从LR到FLEN的进化与演变](/feat-cross/summary.md)
     * [\[ECIR2016\]FNN](/feat-cross/FNN.md)
     * [\[ICDM2016\]PNN](/feat-cross/PNN.md)
+    * [\[ADKDD2017\]Wide & Deep Network](/feat-cross/WDN.md)
 * 理论研究
 <!---    * [深度模型与向量积](/theory/mlp_product.md)--->
 * 摸鱼时间

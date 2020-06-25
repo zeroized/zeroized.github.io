@@ -118,8 +118,6 @@ import torch.nn as nn
 loss_func=torch.nn.BCELoss()
 ```
 
-应对过拟合方面，根据paper的实验结果，dropout的效果好于L2正则化。最终FNN没有使用正则化手段，而是仅仅使用了dropout。
-
 整理一下这一段内容，我们设计并实现一个继承nn.Module的FNN类（model/ctr/fnn.py）（最后并没有对多标签的字段进行处理）：
 
 ```python
@@ -211,3 +209,5 @@ paper中的实验结果：
 全连接层神经元个数：200，300，100（菱形结构）
 
 dropout：0.8 
+
+过拟合：dropout：0.8；无正则

@@ -217,7 +217,7 @@ pij = pij * kernel  # N * num_pairs * emb_dim
 pij = torch.sum(pij, -1)  # N * num_pairs
 ```
 
-在避免过拟合方面，PNN同时使用了L2正则化以及dropout。此外，文中提及的PNN*实际上是$l_p$同时包含inner-product和outer-product两个部分。
+此外，文中提及的PNN*实际上是$l_p$同时包含inner-product和outer-product两个部分。
 
 整理一下这一段内容，我们设计并实现一个继承nn.Module的PNN类（model/ctr/pnn.py）（同样没有对多标签的字段进行处理）：
 
@@ -419,5 +419,7 @@ Embedding维度：10
 隐层深度：3（不包括product layer）
 
 激活函数：ReLU
+
+过拟合：dropout（未给出明确比率）；L2正则化。
 
 其他：先使用FM预训练一个embedding，然后连接起来再继续训练微调。
