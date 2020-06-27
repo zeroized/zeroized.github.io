@@ -396,6 +396,16 @@ PNN模型对交叉层（product layer）的看法是认为相比深度模型更�
 
 评价指标：AUC、RIG（Relative Information Gain）相对信息增益
 
+Embedding维度：10
+
+隐层深度：3（不包括product layer）
+
+激活函数：ReLU
+
+过拟合：dropout（未给出明确比率）；L2正则化。
+
+其他：先使用FM预训练一个embedding，然后连接起来再继续训练微调。
+
 paper中的实验结果：
 
 Criteo数据集：
@@ -413,13 +423,3 @@ iPinYou数据集：
 |IPNN|79.14%|1.376e-1|
 |OPNN|81.74%|1.349e-1|
 |PNN*|76.61%|1.740e-1|
-
-Embedding维度：10
-
-隐层深度：3（不包括product layer）
-
-激活函数：ReLU
-
-过拟合：dropout（未给出明确比率）；L2正则化。
-
-其他：先使用FM预训练一个embedding，然后连接起来再继续训练微调。
