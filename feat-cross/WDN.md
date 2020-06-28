@@ -1,7 +1,7 @@
 # Wide & Deep Network
 2020/06/25
 
-谷歌\[ADKDD2017\][Wide & Deep Learning for Recommender Systems](https://arxiv.org/pdf/1606.07792.pdf)(ver. arXiv)
+谷歌\[DLRS2016\][Wide & Deep Learning for Recommender Systems](https://dl.acm.org/doi/pdf/10.1145/2988450.2988454)(ver. DLRS2016)
 
 ## 前言
 
