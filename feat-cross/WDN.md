@@ -35,7 +35,7 @@ Wide & Deep Network算是谷歌的亲儿子了（16个作者全是谷歌的，�
 
 Wide & Deep Network的模型结构就相当简单了，本质上就是并联一个MLP和一个LR模型：
 
-![Wide & Deep Network模型结构图](img/WDN_model_structure.png)
+![Wide & Deep Network模型结构](img/WDN_model_structure.png)
 
 #### Wide Network
 
@@ -101,6 +101,7 @@ y = self.out_layer(y)
 ```
 
 最后整理得到的（model/ctr/wide_and_deep.py）：
+
 ```python
 import torch
 import torch.nn as nn

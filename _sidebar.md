@@ -7,7 +7,7 @@
     * [\[ICDM2016\] PNN](/feat-cross/PNN.md)
     * [\[DLRS2016\] Wide & Deep Network](/feat-cross/WDN.md)
     * [\[IJCAI2017\] DeepFM](/feat-cross/DeepFM.md)
-    * [\[ADKDD2017\]DCN](/feat-cross/DCN.md)
+    * [\[ADKDD2017\] DCN](/feat-cross/DCN.md)
 * 理论研究
 <!---    * [深度模型与向量积](/theory/mlp_product.md)--->
 * 摸鱼时间
