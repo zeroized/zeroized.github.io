@@ -1,7 +1,7 @@
 # DeepFM
 2020/06/27
 
-华为\[IJCAI2017\][DeepFM: A Factorization-Machine based Neural Network for CTR Prediction](https://www.ijcai.org/Proceedings/2017/0239.pdf)(ver. IJCAI2017)
+华为\[IJCAI2017\][DeepFM: A Factorization-Machine based Neural Network for CTR Prediction](https://www.ijcai.org/Proceedings/2017/0239.pdf)(ver. ijcai.org)
 
 ## 前言
 
