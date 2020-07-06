@@ -5,7 +5,7 @@
 
 ## 前言
 
-DeepFM模型是Wide & Deep Network模型结构的发展形态，其主要的变动是使用一个FM算法代替了Wide网络的LR算法，使Wide网络能够自动进行二阶特征交叉；同时将FM算法中的$v_i$作为Deep网络的embedding来使用。
+DeepFM模型是[Wide & Deep Network](/feat-cross/WDN.md)模型结构的发展形态，其主要的变动是使用一个FM算法代替了Wide网络的LR算法，使Wide网络能够自动进行二阶特征交叉；同时将FM算法中的$v_i$作为Deep网络的embedding来使用。
 
 ### 太长不看版结论
 
