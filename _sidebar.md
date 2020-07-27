@@ -10,6 +10,8 @@
     * [\[ADKDD2017\] DCN](/feat-cross/DCN.md)
     * [\[SIGIR2017\] NFM](/feat-cross/NFM.md)
     * [\[IJCAI2017\] AFM](/feat-cross/AFM.md)
+* 序列推荐
+<!---    * [\[KDD2018\] DIN](/seq/DIN.md)--->
 * 理论研究
 <!---    * [深度模型与向量积](/theory/mlp_product.md)--->
 * 摸鱼时间
