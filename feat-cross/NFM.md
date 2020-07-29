@@ -1,7 +1,7 @@
 # NFM: Neural Factorization Machines
 2020/07/06
 
-新加坡国立大学\[SIGIR2017\][Neural Factorization Machines for Sparse Predictive Analytics](http://staff.ustc.edu.cn/~hexn/papers/sigir17-nfm.pdf)(ver. ustc)
+新加坡国立大学\[SIGIR 2017\][Neural Factorization Machines for Sparse Predictive Analytics](http://staff.ustc.edu.cn/~hexn/papers/sigir17-nfm.pdf) (ver. USTC)
 
 ## 前言
 

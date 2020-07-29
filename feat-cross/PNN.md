@@ -1,7 +1,7 @@
 # PNN: Product-based Neural Network
 2020/06/21
 
-上海交大 & UCL\[ICDM2016\][Product-based Neural Networks for User Response Prediction](https://arxiv.org/pdf/1611.00144.pdf)(ver. arXiv)
+上海交大 & UCL\[ICDM 2016\][Product-based Neural Networks for User Response Prediction](https://arxiv.org/pdf/1611.00144.pdf) (ver. arXiv-v1)
 
 ## 前言
 

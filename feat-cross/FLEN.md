@@ -1,7 +1,7 @@
 # FLEN:老问题新解决
 2020/06/16
 
-美图，腾讯&厦门大学\[AAAI2020\] [FLEN: Leveraging Field for Scalable CTR Prediction](https://arxiv.org/abs/1911.04690)（链接是arXiv预印版）
+美图，腾讯&厦门大学\[AAAI 2020\] [FLEN: Leveraging Field for Scalable CTR Prediction](https://arxiv.org/abs/1911.04690) (ver. arXiv-v3)
 
 ## 前言
 

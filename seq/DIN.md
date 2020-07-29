@@ -1,7 +1,8 @@
 # DIN: Deep Interest Network
 2020/07/26
 
-阿里巴巴\[KDD2018\][](https://arxiv.org/pdf/1706.06978.pdf)(ver. arXiv-v4，同KDD版本)
+阿里巴巴\[KDD2018\][Deep Interest Network for Click-Through Rate Prediction
+](https://arxiv.org/pdf/1706.06978.pdf) (ver. arXiv-v4，同KDD版本)
 
 ## 前言
 

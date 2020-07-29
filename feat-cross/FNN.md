@@ -1,7 +1,7 @@
 # FNN: Factorization-machine supported Neural Network
 2020/06/19
 
-UCL & RayCloud（杭州）\[ECIR2016\][Deep Learning over Multi-field Categorical Data – A Case Study on User Response Prediction](https://arxiv.org/pdf/1601.02376.pdf)(ver. arXiv)
+UCL & RayCloud（杭州）\[ECIR 2016\][Deep Learning over Multi-field Categorical Data – A Case Study on User Response Prediction](https://arxiv.org/pdf/1601.02376.pdf) (ver. arXiv-v1)
 
 ## 前言
 

@@ -1,7 +1,7 @@
 # DCN: Deep & Cross Network
 2020/06/30
 
-斯坦福大学 & 谷歌[Deep & Cross Network for Ad Click Predictions](https://dl.acm.org/doi/pdf/10.1145/3124749.3124754)(ver. acm)
+斯坦福大学 & 谷歌\[KDD 2017\][Deep & Cross Network for Ad Click Predictions](https://dl.acm.org/doi/pdf/10.1145/3124749.3124754) (ver. KDD)
 
 ## 前言
 

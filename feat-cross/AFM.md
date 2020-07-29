@@ -1,7 +1,7 @@
 # AFM: Attentional Factorization Machines
 2020/07/13
 
-浙江大学 & 新加坡国立大学\[IJCAI 2017\][Attentional Factorization Machines: Learning the Weight of Feature Interactions via Attention Networks](https://www.ijcai.org/Proceedings/2017/0435.pdf)
+浙江大学 & 新加坡国立大学\[IJCAI 2017\][Attentional Factorization Machines: Learning the Weight of Feature Interactions via Attention Networks](https://www.ijcai.org/Proceedings/2017/0435.pdf) (ver. IJCAI)
 
 ## 前言
 
