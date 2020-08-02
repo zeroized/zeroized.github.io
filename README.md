@@ -28,7 +28,7 @@ DeepRec-torch是一个基于pytorch的推荐系统模型实现框架，提供了
 
 # 更新历史
 
-<!---2020/07/28 DIN--->
+2020/08/02 DIN
 
 2020/07/13 AFM
 
@@ -37,9 +37,9 @@ DeepRec-torch是一个基于pytorch的推荐系统模型实现框架，提供了
 2020/06/30 DCN
 
 2020/06/27 DeepFM
-
-2020/06/25 Wide & Deep Network
 <!---
+2020/06/25 Wide & Deep Network
+
 2020/06/22 PNN
 
 2020/06/19 FNN
