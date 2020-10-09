@@ -26,7 +26,7 @@
 
 文中大部分论点均来自于paper自身，笔者会在动机和模型分析部分引用paper中的原文进行论述
 
-### [DeepRec-torch](https://github.com/zeroized/DeepRec-torch)
+### DeepRec-torch
 
 DeepRec-torch是一个基于pytorch的推荐系统模型实现框架，提供了预设的特征工程方法和现有推荐模型的实现，并按照架构分层的思想对训练过程和模型进行了软件工程的设计
 
