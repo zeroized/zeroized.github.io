@@ -57,7 +57,7 @@ Cross网络部分采用了DC模型的residual思想（实际上ResNet好像也�
 
 $$ x_{l+1}=x_0x_l^Tw_l+b_l+x_l \tag{3} $$
 
-这一部分和[PNN](/feat-cross/PNN.md)中以vector作为OPNN的权重核时完全一致，在每一次计算cross层时，特征交叉的阶数增加1阶。另外，在计算公式中的最后一项$x_l$是残差项，当传递到最后一层时，残差项的值为$x_1+x_2+...+x_l$，即权重$w_l$和偏置项$b_l$实际拟合的是$x_{l+1}-x_l$。
+这一部分和[PNN](/rec/feat-crossross/PNN.md)中以vector作为OPNN的权重核时完全一致，在每一次计算cross层时，特征交叉的阶数增加1阶。另外，在计算公式中的最后一项$x_l$是残差项，当传递到最后一层时，残差项的值为$x_1+x_2+...+x_l$，即权重$w_l$和偏置项$b_l$实际拟合的是$x_{l+1}-x_l$。
 
 paper中提到由于$x_0x_l^T$的结果矩阵秩为1，所以不需要把整个矩阵都计算出来，可以大幅度节约时间和空间成本。这里笔者觉得不是只要进行一次结合律就可以变成向量数乘了吗（不是
 
@@ -204,7 +204,7 @@ class CrossLayer(nn.Module):
 
 > We jointly train both networks, as this allows each individual network to be aware of the others during the training.
 
-对于这个“be aware of the others”，笔者在前一篇[DeepFM](/feat-cross/DeepFM.md)模型的分析中做过一定的分析：
+对于这个“be aware of the others”，笔者在前一篇[DeepFM](/rec/feat-crossross/DeepFM.md)模型的分析中做过一定的分析：
 
 > 回到DeepFM模型上来。DeepFM的并联模型相比Wide & Deep Network，使用了同一组embedding作为两个部分的输入，这使得Wide & Deep Network的“相互制衡”策略在DeepFM中得到了升级，在BP更新embedding的时候，FM部分和MLP部分能够“相互学习”：FM模型保持了embedding中的隐式二阶特征交叉信息（交叉特征权重=两个特征的嵌入向量内积），而MLP强化了embedding的泛化能力。
 

@@ -205,7 +205,7 @@ class BiInteractionLayer(nn.Module):
 
 那为什么用FM预训练embedding以后可以提升超过11%的性能？简单来说就是，先通过FM把二阶特征交叉信息保存到embedding中，这样就不需要深度模型去学习特征交叉了（FNN的思路）。那既然已经用FM预训练把二阶特征交叉信息放进去了，不如直接显式使用二阶交叉的结果：直接把二阶交叉的结果输入到MLP中就是这篇paper中的NFM模型了。
 
-然后谈谈模型的结构。从模型结构的角度上讲，NFM和[DeepFM](/feat-cross/DeepFM.md)虽然都可以看作是FM的升级版本，但DeepFM本质是从Wide & Deep Network角度出发，使用FM代替人工的Wide来提升自动特征工程的能力；而NFM则是在FM的基础上增加深度模型来提升模型的表达能力（动机类似[PNN](/feat-cross/PNN.md)）。因此，不能将NFM和DeepFM等同地看作FM的两种不同升级路径，其区别也不只是串联和并联结构的不同。
+然后谈谈模型的结构。从模型结构的角度上讲，NFM和[DeepFM](/rec/feat-crossross/DeepFM.md)虽然都可以看作是FM的升级版本，但DeepFM本质是从Wide & Deep Network角度出发，使用FM代替人工的Wide来提升自动特征工程的能力；而NFM则是在FM的基础上增加深度模型来提升模型的表达能力（动机类似[PNN](/rec/feat-crossross/PNN.md)）。因此，不能将NFM和DeepFM等同地看作FM的两种不同升级路径，其区别也不只是串联和并联结构的不同。
 
 最后是对实验部分4.3“很深的模型是没有必要的”这一结论的讨论。笔者在前言中提到了，认为这一结论可以推广到所有将MLP串联到特征交叉层后的模型上。在paper中何博士对实验结果的分析如下：
 
