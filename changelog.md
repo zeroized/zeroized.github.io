@@ -1,5 +1,15 @@
 # 更新历史
 
+#### 2020/10/11
+- Time & Watermark(1): Flink中Watermark的生成 第三部分（assignTimestampsAndWatermark源代码分析）（全部完成）
+
+#### 2020/10/10
+- Time & Watermark(1): Flink中Watermark的生成 第二部分（Watermark概念和Source中生成Watermark源代码分析）
+
+#### 2020/10/09
+- 增加分布式计算板块并调整边栏结构
+- Time & Watermark(1): Flink中Watermark的生成 第一部分（流式计算中的Time概念）
+
 ### 2020/08/02
 - DIN
 - 修复“由于KaTex版本更新导致的公式默认字体变为正体”的问题

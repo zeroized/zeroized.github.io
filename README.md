@@ -34,6 +34,8 @@ DeepRec-torch是一个基于pytorch的推荐系统模型实现框架，提供了
 
 ## 更新历史
 
+2020/10/11 Time & Watermark——Flink中Watermark的生成
+
 2020/08/02 DIN
 
 2020/07/13 AFM
@@ -41,19 +43,6 @@ DeepRec-torch是一个基于pytorch的推荐系统模型实现框架，提供了
 2020/07/06 NFM
 
 2020/06/30 DCN
-
-2020/06/27 DeepFM
-<!---
-2020/06/25 Wide & Deep Network
-
-2020/06/22 PNN
-
-2020/06/19 FNN
-
-2020/06/15 综述篇——从LR到FLEN的进化与演变
-
-2020/06/12 卷首语
---->
 
 ---
 Powered by [docsify](https://docsify.js.org/)

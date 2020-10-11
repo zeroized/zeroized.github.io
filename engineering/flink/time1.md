@@ -1,4 +1,4 @@
-# Time & Watermark
+# Time & Watermark(1): Flink中Watermark的生成
 2020/10/09
 
 ## 相关概念
@@ -53,9 +53,9 @@ Flink中Watermark的生成分为两种：
 1. 直接在Source中生成，对应代码中```SourceContext```接口的实现```WatermarkContext```抽象类（其子类```ManualWatermarkContext```类和```AutomaticWatermarkContext```类分别对应Event Time和Ingestion Time）
 2. 在Source后生成，对应代码中的DataStream类中```assignTimestampsAndWatermarks(WatermarkStrategy<T>)```方法
 
-#### 在Source中生成
+#### 在Source中生成Watermark
 
-我们首先来追溯一下生成和启动Source算子的流程中与生成Watermark相关的部分。
+我们首先来看一下生成和启动Source算子的流程中与生成Watermark相关的部分。
 
 ```java
 // StreamSource.class 第90行
@@ -669,26 +669,187 @@ private static class AutomaticWatermarkContext<T> extends WatermarkContext<T> {
 4. 在```processAndCollect(T)```方法中，为了避免锁争用导致的```WatermarkEmittingTask```Watermark同步错误，因此每次收集新记录时（只要满足同步条件）就会手动进行一次nextWatermarkTime同步
 5. 当且仅当参数Watermark为```Long.MAX_VALUE```时（诸如Kafka等Source的结束特殊标识）时，才允许手动调用```emitWatermark(Watermark)```方法，此时Source会认为输入已经结束
 
-<!---
-### WatermarkStrategy
+#### 使用WatermarkStrategy生成Watermark
 
-#### Punctuated Watermark
+使用WatermarkStrategy生成，即调用DataStream类实例对象的```assignTimestampsAndWatermarks(WatermarkStrategy<T>)```方法生成Watermark。使用这种方式生成Watermark并不限于Source算子，而是可以对任意一个算子操作（其本质是对算子进行了一次transformation，对算子产出的StreamRecord进行Watermark和Timestamp的后处理）。需要注意的是，在1.11版本中，原来的```AssignerWithPunctuatedWatermarks<T>```或```AssignerWithPeriodicWatermarks<T>```已经被标记为过期方法，不建议继续使用，Punctuated（对应```onEvent(T,long,WatermarkOutput)```）和Periodic（对应```onPeriodicEmit(WatermarkOutput)```）生成方法被合并到了WatermarkStrategy接口中。关于WatermarkStrategy如何实现，在[Flink官方文档](https://ci.apache.org/projects/flink/flink-docs-release-1.11/dev/event_timestamps_watermarks.html)中已经介绍的很详细了，这里就不再赘述了。
 
-#### Heuristic Watermark
+```java
+// DataStream.class第897行
+public SingleOutputStreamOperator<T> assignTimestampsAndWatermarks(
+		WatermarkStrategy<T> watermarkStrategy) {
 
-## Watermark的传播 
+	final WatermarkStrategy<T> cleanedStrategy = clean(watermarkStrategy);
 
-### Output
+	final TimestampsAndWatermarksOperator<T> operator =
+		new TimestampsAndWatermarksOperator<>(cleanedStrategy);
 
-## Watermark的处理
+	// match parallelism to input, to have a 1:1 source -> timestamps/watermarks relationship and chain
+	final int inputParallelism = getTransformation().getParallelism();
 
-###
---->
+	return transform("Timestamps/Watermarks", getTransformation().getOutputType(), operator)
+		.setParallelism(inputParallelism);
+}
+```
+
+此处生成了一个```TimestampsAndWatermarksOperator```作为处理Watermark和事件/数据Timestamp的算子（Transform），然后将原先定义的算子和Watermark算子合并成为一个算子。
+
+<details>
+<summary>TimestampsAndWatermarksOperator</summary>
+
+```java
+// TimestampsAndWatermarksOperator.class
+/**
+ * A stream operator that may do one or both of the following: extract timestamps from
+ * events and generate watermarks.
+ *
+ * <p>These two responsibilities run in the same operator rather than in two different ones,
+ * because the implementation of the timestamp assigner and the watermark generator is
+ * frequently in the same class (and should be run in the same instance), even though the
+ * separate interfaces support the use of different classes.
+ *
+ * @param <T> The type of the input elements
+ */
+public class TimestampsAndWatermarksOperator<T>
+		extends AbstractStreamOperator<T>
+		implements OneInputStreamOperator<T, T>, ProcessingTimeCallback {
+
+	private static final long serialVersionUID = 1L;
+
+	private final WatermarkStrategy<T> watermarkStrategy;
+
+	/** The timestamp assigner. */
+	private transient TimestampAssigner<T> timestampAssigner;
+
+	/** The watermark generator, initialized during runtime. */
+	private transient WatermarkGenerator<T> watermarkGenerator;
+
+	/** The watermark output gateway, initialized during runtime. */
+	private transient WatermarkOutput wmOutput;
+
+	/** The interval (in milliseconds) for periodic watermark probes. Initialized during runtime. */
+	private transient long watermarkInterval;
+
+	public TimestampsAndWatermarksOperator(
+			WatermarkStrategy<T> watermarkStrategy) {
+
+		this.watermarkStrategy = checkNotNull(watermarkStrategy);
+		this.chainingStrategy = ChainingStrategy.ALWAYS;
+	}
+
+	@Override
+	public void open() throws Exception {
+		super.open();
+
+		timestampAssigner = watermarkStrategy.createTimestampAssigner(this::getMetricGroup);
+		watermarkGenerator = watermarkStrategy.createWatermarkGenerator(this::getMetricGroup);
+
+		wmOutput = new WatermarkEmitter(output, getContainingTask().getStreamStatusMaintainer());
+
+		watermarkInterval = getExecutionConfig().getAutoWatermarkInterval();
+		if (watermarkInterval > 0) {
+			final long now = getProcessingTimeService().getCurrentProcessingTime();
+			getProcessingTimeService().registerTimer(now + watermarkInterval, this);
+		}
+	}
+
+	@Override
+	public void processElement(final StreamRecord<T> element) throws Exception {
+		final T event = element.getValue();
+		final long previousTimestamp = element.hasTimestamp() ? element.getTimestamp() : Long.MIN_VALUE;
+		final long newTimestamp = timestampAssigner.extractTimestamp(event, previousTimestamp);
+
+		element.setTimestamp(newTimestamp);
+		output.collect(element);
+		watermarkGenerator.onEvent(event, newTimestamp, wmOutput);
+	}
+
+	@Override
+	public void onProcessingTime(long timestamp) throws Exception {
+		watermarkGenerator.onPeriodicEmit(wmOutput);
+
+		final long now = getProcessingTimeService().getCurrentProcessingTime();
+		getProcessingTimeService().registerTimer(now + watermarkInterval, this);
+	}
+
+	/**
+	 * Override the base implementation to completely ignore watermarks propagated from
+	 * upstream, except for the "end of time" watermark.
+	 */
+	@Override
+	public void processWatermark(org.apache.flink.streaming.api.watermark.Watermark mark) throws Exception {
+		// if we receive a Long.MAX_VALUE watermark we forward it since it is used
+		// to signal the end of input and to not block watermark progress downstream
+		if (mark.getTimestamp() == Long.MAX_VALUE) {
+			wmOutput.emitWatermark(Watermark.MAX_WATERMARK);
+		}
+	}
+
+	@Override
+	public void close() throws Exception {
+		super.close();
+		watermarkGenerator.onPeriodicEmit(wmOutput);
+	}
+
+	// ------------------------------------------------------------------------
+
+	/**
+	 * Implementation of the {@code WatermarkEmitter}, based on the components
+	 * that are available inside a stream operator.
+	 */
+	private static final class WatermarkEmitter implements WatermarkOutput {
+
+		private final Output<?> output;
+
+		private final StreamStatusMaintainer statusMaintainer;
+
+		private long currentWatermark;
+
+		private boolean idle;
+
+		WatermarkEmitter(Output<?> output, StreamStatusMaintainer statusMaintainer) {
+			this.output = output;
+			this.statusMaintainer = statusMaintainer;
+			this.currentWatermark = Long.MIN_VALUE;
+		}
+
+		@Override
+		public void emitWatermark(Watermark watermark) {
+			final long ts = watermark.getTimestamp();
+
+			if (ts <= currentWatermark) {
+				return;
+			}
+
+			currentWatermark = ts;
+
+			if (idle) {
+				idle = false;
+				statusMaintainer.toggleStreamStatus(StreamStatus.ACTIVE);
+			}
+
+			output.emitWatermark(new org.apache.flink.streaming.api.watermark.Watermark(ts));
+		}
+
+		@Override
+		public void markIdle() {
+			idle = true;
+			statusMaintainer.toggleStreamStatus(StreamStatus.IDLE);
+		}
+	}
+}
+```
+</details>
+
+在```TimestampsAndWatermarksOperator```中，每次处理事件都会调用一次```WatermarkGenerator```接口实现的```onEvent(T,long,WatermarkOutput)```方法，因此官方指南中给出的Punctuated Watermark的使用方法是对该方法进行实现。
+
+而```WatermarkGenerator```接口中的```onPeriodicEmit(WatermarkOutput)```方法在```onProcessingTime(long)```方法中被调用。```onProcessingTime(long)```实现自```ProcessingTimeCallback```接口，当定时任务被触发时就会执行。因此，```onPeriodicEmit(WatermarkOutput)```方法会周期性地执行并生成Watermark，官方指南给出实现该方法作为使用Periodical Watermark的方法。
+
+除了上述两个对Watermark具体生成时间进行控制的部分，```TimestampsAndWatermarksOperator```中还有两个关键点（这里实际上属于后一篇——Watermark的传播与处理——中的内容）：
+1. ```TimestampsAndWatermarksOperator```覆写了其父类```AbstractStreamOperator```中```processWatermark(Watermark)```的过程，因此一旦一个算子使用assignTimestampsAndWatermarks(WatermarkStrategy<T>)进行水印的添加，它将不再处理来自上游的Watermark并按照自己设定的逻辑生成并向下游发送新的Watermark（除非遇到和前面所说一致的流结束标识Watermark）。
+2. 使用```WatermarkEmitter```作为```WatermarkOutput```接口的实现，在传播Watermark时，比较当前待发出的Watermark与已发出所有Watermark中最晚的时间戳```currentWatermark```，如果当前带发出Watermark比```currentWatermark```早，则会被丢弃（在语义上形成了冗余）。
 
 ## 参考文献
 
 1. [Timely Stream Processing](https://ci.apache.org/projects/flink/flink-docs-release-1.11/concepts/timely-stream-processing.html)
-2. [Streaming 101: The world beyond batch](https://www.oreilly.com/radar/the-world-beyond-batch-streaming-101/)
-3. [Streaming 102: The world beyond batch](https://www.oreilly.com/radar/the-world-beyond-batch-streaming-102/)
-4. [流式计算系统系列（2）：时间](https://zhuanlan.zhihu.com/p/103472646)
-5. [A Practical Approach to Balancing Correctness, Latency, and Cost in MassiveScale, Unbounded, OutofOrder Data Processing](https://research.google.com/pubs/archive/43864.pdf)
+2. [Streaming 102: The world beyond batch](https://www.oreilly.com/radar/the-world-beyond-batch-streaming-102/)
+3. [流式计算系统系列（2）：时间](https://zhuanlan.zhihu.com/p/103472646)
