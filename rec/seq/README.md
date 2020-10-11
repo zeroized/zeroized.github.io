@@ -1,4 +1,4 @@
-# 序列推荐
+# 序列推荐 <!-- {docsify-ignore-all} -->
 
 ## RNN-based
 
