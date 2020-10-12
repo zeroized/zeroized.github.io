@@ -1,5 +1,8 @@
 # 更新历史
 
+#### 2020/10/12
+- Time & Watermark(2): Watermark的传播与处理 第一部分（Watermark的传播）
+
 #### 2020/10/11
 - Time & Watermark(1): Flink中Watermark的生成 第三部分（assignTimestampsAndWatermark源代码分析）（全部完成）
 

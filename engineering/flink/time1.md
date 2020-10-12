@@ -1,6 +1,8 @@
 # Time & Watermark(1): Flink中Watermark的生成
 2020/10/09
 
+注：源代码为Flink1.11.0版本
+
 ## 相关概念
 
 ### Event Time, Processing Time & Ingestion Time
