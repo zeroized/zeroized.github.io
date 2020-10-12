@@ -291,8 +291,8 @@ public class StatusWatermarkValve {
 3. 检查所有同步Channel中的Watermark状态，记录其中最早的Watermark时间戳。如果存在同步Channel，且该最早时间戳比```lastOutputWatermark```晚，向下游输出该时间戳作为Watermark
 
 另一方面，StreamStatus的变化也会导致Valve输出Watermark。当收到的StreamStatus将一个ACTIVE的Channel状态修改为IDLE：
-    - 如果此时所有的Channel都变为闲置状态，且该Channel输出了```lastOutputWatermark```，则执行FlushAll操作，输出所有Channel状态中时间戳最大的Watermark，以触发下游算子可能的最晚的计算
-    - 如果此时还有其他激活状态的Channel，且该Channel输出了```lastOutputWatermark```，则执行输出Watermark流程的第3步，发送同步Channel中最早的Watermark
+- 如果此时所有的Channel都变为闲置状态，且该Channel输出了```lastOutputWatermark```，则执行FlushAll操作，输出所有Channel状态中时间戳最大的Watermark，以触发下游算子可能的最晚的计算
+- 如果此时还有其他激活状态的Channel，且该Channel输出了```lastOutputWatermark```，则执行输出Watermark流程的第3步，发送同步Channel中最早的Watermark
 
 ## 参考文献
 
