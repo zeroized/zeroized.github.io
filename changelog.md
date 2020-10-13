@@ -1,5 +1,8 @@
 # 更新历史
 
+#### 2020/10/13
+- Time & Watermark(2): Watermark的传播与处理 第二部分（Watermark的处理）（全部完成）
+
 #### 2020/10/12
 - Time & Watermark(2): Watermark的传播与处理 第一部分（Watermark的传播）
 

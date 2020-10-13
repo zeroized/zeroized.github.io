@@ -290,9 +290,225 @@ public class StatusWatermarkValve {
 2. 判断新到的Watermark时间戳是否比```lastOutputWatermark```时间更晚（即判断是不是上面情况二中延迟的Watermark），如果不是一个延迟Watermark，则将这个Channel标记为同步（aligned）Channel
 3. 检查所有同步Channel中的Watermark状态，记录其中最早的Watermark时间戳。如果存在同步Channel，且该最早时间戳比```lastOutputWatermark```晚，向下游输出该时间戳作为Watermark
 
-另一方面，StreamStatus的变化也会导致Valve输出Watermark。当收到的StreamStatus将一个ACTIVE的Channel状态修改为IDLE：
+另一方面，StreamStatus的变化也会导致Valve输出Watermark。当收到的StreamStatus将一个```ACTIVE```的Channel状态修改为```IDLE```：
 - 如果此时所有的Channel都变为闲置状态，且该Channel输出了```lastOutputWatermark```，则执行FlushAll操作，输出所有Channel状态中时间戳最大的Watermark，以触发下游算子可能的最晚的计算
 - 如果此时还有其他激活状态的Channel，且该Channel输出了```lastOutputWatermark```，则执行输出Watermark流程的第3步，发送同步Channel中最早的Watermark
+
+## Watermark的处理
+
+### 基本处理过程
+
+Flink的流算子分为两类，分别是只有一个输入流、实现```OneInputStreamOperator```接口的单输入流算子，对应的Watermark处理方法是```processWatermark(Watermark)```；以及有两个输入流、实现```TwoInputStreamOperator```接口的双输入流算子，对应的Watermark处理方法是```processWatermark1(Watermark)```和```processWatermark2(Watermark)```。```AbstractStreamOperator```抽象类继承了这两个接口，并为所有的算子提供了最基础的功能实现。值得一提的是，两个输入流的Watermark处理方法是完全一致的，并在后续版本中会使用```AbstractStreamOperatorV2```代替```AbstractStreamOperator```并同时支持多输入流算子```MultipleInputStreamOperator```接口（目前仅在test中有实现）。
+
+```java
+// AbstractStreamOperator.class第566行
+public void processWatermark(Watermark mark) throws Exception {
+	if (timeServiceManager != null) {
+		timeServiceManager.advanceWatermark(mark);
+	}
+	output.emitWatermark(mark);
+}
+
+public void processWatermark1(Watermark mark) throws Exception {
+	input1Watermark = mark.getTimestamp();
+	long newMin = Math.min(input1Watermark, input2Watermark);
+	if (newMin > combinedWatermark) {
+		combinedWatermark = newMin;
+		processWatermark(new Watermark(combinedWatermark));
+	}
+}
+
+public void processWatermark2(Watermark mark) throws Exception {
+	input2Watermark = mark.getTimestamp();
+	long newMin = Math.min(input1Watermark, input2Watermark);
+	if (newMin > combinedWatermark) {
+		combinedWatermark = newMin;
+		processWatermark(new Watermark(combinedWatermark));
+	}
+}
+
+// AbstractStreamOperatorV2.class第473行
+protected void reportWatermark(Watermark mark, int inputId) throws Exception {
+	inputWatermarks[inputId - 1] = mark.getTimestamp();
+	long newMin = mark.getTimestamp();
+	for (long inputWatermark : inputWatermarks) {
+		newMin = Math.min(inputWatermark, newMin);
+	}
+	if (newMin > combinedWatermark) {
+		combinedWatermark = newMin;
+		processWatermark(new Watermark(combinedWatermark));
+	}
+}
+```
+
+对双输入乃至多输入的情况，Base算子对Watermark的处理是一致的，均是取了输入流中最小的Watermark再处理，处理完成以后再向下游发出该Watermark。实际处理Watermark的流程为```AbstractStreamOperator#processWatermark```$\to$```InternalTimeServiceManager#advanceWatermark```$\to$```InternalTimerServiceImpl#advanceWatermark```。
+
+```java
+// InternalTimerServiceImpl.class第268行
+public void advanceWatermark(long time) throws Exception {
+	currentWatermark = time;
+
+	InternalTimer<K, N> timer;
+
+	while ((timer = eventTimeTimersQueue.peek()) != null && timer.getTimestamp() <= time) {
+		eventTimeTimersQueue.poll();
+		keyContext.setCurrentKey(timer.getKey());
+		triggerTarget.onEventTime(timer);
+	}
+}
+```
+
+基本处理逻辑就是，当一个新Watermark到来时，将Event Time的计时器队列中所有到时间的计时器取出来，然后触发对应的触发器```Triggerable#onEventTime```。单输入流触发器包括与窗口相关的```WindowOperator```及其子类和与窗口无关的```KeyedProcessOperator```；双输入流触发器包括```IntervalJoinOperator```、```KeyedCoProcessOperator```和```CoBroadcastWithKeyedOperator```
+
+### 特殊处理过程
+
+大部分继承```AbstractStreamOperator```的流算子都使用了父类提供的Watermark处理方法，并记录了当前Watermark的状态，形如：
+```java
+@Override
+public void processWatermark(Watermark mark) throws Exception {
+	super.processWatermark(mark);
+	currentWatermark = mark.getTimestamp();
+}
+```
+
+一部分算子无视了来自上游的Watermark。这些算子往往自己生成Watermark，比如上一篇中提到的```TimestampsAndWatermarksOperator```、处理```TimestampedFileInputSplit```的```ContinuousFileReaderOperator```
+
+Async I/O算子```AsyncWaitOperator```将Watermark当成一个处理完成的数据元素（见```WatermarkQueueEntry```）放入异步I/O队列中，处理根据异步I/O结果是否有序有不同的处理流程。Watermark的到达一定会触发一次Async I/O的结果输出（调用```StreamElementQueue#emitCompletedElement```方法）。
+
+```java
+// AsyncWaitOperator.class第199行
+@Override
+public void processWatermark(Watermark mark) throws Exception {
+	addToWorkQueue(mark);
+
+	// watermarks are always completed
+	// if there is no prior element, we can directly emit them
+	// this also avoids watermarks being held back until the next element has been processed
+	outputCompletedElement();
+}
+
+// AsyncWaitOperator.class第254行
+private ResultFuture<OUT> addToWorkQueue(StreamElement streamElement) throws InterruptedException {
+
+	Optional<ResultFuture<OUT>> queueEntry;
+	while (!(queueEntry = queue.tryPut(streamElement)).isPresent()) {
+		mailboxExecutor.yield();
+	}
+
+	return queueEntry.get();
+}
+
+// AsyncWaitOperator.class第277行 
+private void outputCompletedElement() {
+	if (queue.hasCompletedElements()) {
+		// emit only one element to not block the mailbox thread unnecessarily
+		queue.emitCompletedElement(timestampedCollector);
+		// if there are more completed elements, emit them with subsequent mails
+		if (queue.hasCompletedElements()) {
+			mailboxExecutor.execute(this::outputCompletedElement, "AsyncWaitOperator#outputCompletedElement");
+		}
+	}
+}
+```
+
+结果有序的情况下，Watermark被直接放入异步I/O处理队列中。
+
+<details>
+<summary>结果有序Async I/O算子相关Watermark处理逻辑</summary>
+
+```java
+// OrderedStreamElementQueue.class第62行
+@Override
+public boolean hasCompletedElements() {
+	return !queue.isEmpty() && queue.peek().isDone();
+}
+
+@Override
+public void emitCompletedElement(TimestampedCollector<OUT> output) {
+	if (hasCompletedElements()) {
+		final StreamElementQueueEntry<OUT> head = queue.poll();
+		head.emitResult(output);
+	}
+}
+
+// OrderedStreamElementQueue.class第95行
+@Override
+public Optional<ResultFuture<OUT>> tryPut(StreamElement streamElement) {
+	if (queue.size() < capacity) {
+		StreamElementQueueEntry<OUT> queueEntry = createEntry(streamElement);
+
+		queue.add(queueEntry);
+
+		LOG.debug("Put element into ordered stream element queue. New filling degree " +
+			"({}/{}).", queue.size(), capacity);
+
+		return Optional.of(queueEntry);
+	} else {
+		LOG.debug("Failed to put element into ordered stream element queue because it " +
+			"was full ({}/{}).", queue.size(), capacity);
+
+		return Optional.empty();
+	}
+}
+
+private StreamElementQueueEntry<OUT> createEntry(StreamElement streamElement) {
+	if (streamElement.isRecord()) {
+		return new StreamRecordQueueEntry<>((StreamRecord<?>) streamElement);
+	}
+	if (streamElement.isWatermark()) {
+		return new WatermarkQueueEntry<>((Watermark) streamElement);
+	}
+	throw new UnsupportedOperationException("Cannot enqueue " + streamElement);
+}
+```
+</details>
+
+结果无序的情况下，Watermark会把数据元素分割成若干段，只有先前所有的段都已经完成（或超时）并发出后，才能发出下一个段的异步I/O返回数据。Watermark的到来会创建一个容量为1的新段（或是重用前一个已经处理完毕但还没有回收的段），然后在该段后再创建一个正常容量的段。由于Watermark所在的段只包含Watermark一个元素，且Watermark的完成状态永远是true，所以Watermark对应段总能在触发输出时被发出并移出队列。
+
+<details>
+<summary>结果无序Aysnc I/O算子相关Watermark处理逻辑</summary>
+
+```java
+// UnorderedStreamElementQueue.class第140行
+@Override
+public boolean hasCompletedElements() {
+	return !this.segments.isEmpty() && this.segments.getFirst().hasCompleted();
+}
+
+@Override
+public void emitCompletedElement(TimestampedCollector<OUT> output) {
+	if (segments.isEmpty()) {
+		return;
+	}
+	final Segment currentSegment = segments.getFirst();
+	numberOfEntries -= currentSegment.emitCompleted(output);
+
+	// remove any segment if there are further segments, if not leave it as an optimization even if empty
+	if (segments.size() > 1 && currentSegment.isEmpty()) {
+		segments.pop();
+	}
+}
+
+// UnorderedStreamElementQueue.class第121行
+private StreamElementQueueEntry<OUT> addWatermark(Watermark watermark) {
+	Segment<OUT> watermarkSegment;
+	if (!segments.isEmpty() && segments.getLast().isEmpty()) {
+		// reuse already existing segment if possible (completely drained) or the new segment added at the end of
+		// this method for two succeeding watermarks
+		watermarkSegment = segments.getLast();
+	} else {
+		watermarkSegment = addSegment(1);
+	}
+
+	StreamElementQueueEntry<OUT> watermarkEntry = new WatermarkQueueEntry<>(watermark);
+	watermarkSegment.add(watermarkEntry);
+
+	// add a new segment for actual elements
+	addSegment(capacity);
+	return watermarkEntry;
+}
+```
+</details>
 
 ## 参考文献
 

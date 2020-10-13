@@ -34,7 +34,9 @@ DeepRec-torch是一个基于pytorch的推荐系统模型实现框架，提供了
 
 ## 更新历史
 
-2020/10/11 Time & Watermark——Flink中Watermark的生成
+2020/10/13 Time & Watermark(2): Watermark的传播与处理
+
+2020/10/11 Time & Watermark(1): 概念与Watermark的生成
 
 2020/08/02 DIN
 
