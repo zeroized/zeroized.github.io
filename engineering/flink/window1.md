@@ -1,4 +1,4 @@
-# Window(1): 窗口的分配、触发与回收
+# Window(1): 窗口的分配
 2020/10/15
 
 在[Time & Watermark(1): Flink中Watermark的生成](/engineering/flink/time1.md)和[Time & Watermark(2): Watermark的传播与处理](/engineering/flink/time2.md)中介绍了Flink是如何处理Event Time和Watermark的。作为流式计算的核心概念之一，同时也是Time最重要的应用场景，本篇将主要分析窗口的运行方式。
@@ -106,7 +106,7 @@ public abstract class WindowAssigner<T, W extends Window> implements Serializabl
 
 每个```WindowAssigner```都有默认的触发器，因此在创建窗口处理过程时不是必须要调用```[All]WindowedStream#trigger```。根据Flink官方文档和源代码中的实现类，内置的窗口分配方法可以分为：Tumbling Window滚动窗口、Sliding Window滑动窗口、Session Window会话窗口、动态会话窗口和Global Window全局窗口，又根据默认的时间触发器类型有Processing Time还是Event Time，总共有9种内置分配器（全局窗口不区分时间类型）。
 
-全局窗口只有一个窗口：
+全局窗口只有一个窗口，窗口的触发完全依赖自定义触发器（默认触发器为永不触发```NeverTrigger```）：
 
 <details>
 <summary>全局窗口</summary>
