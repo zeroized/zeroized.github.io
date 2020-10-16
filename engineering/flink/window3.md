@@ -5,7 +5,7 @@
 
 ## 无回收器的窗口状态
 
-窗口的状态由窗口算子维护，因此在[Window(1): 窗口的分配](/engineering/flink/window1.md)中提到了“窗口并不真正拥有数据”这一概念（实际从代码实现看，只是窗口类的实例没有拥有数据，在窗口状态中维护了窗口的```namespace```$\to$属于该窗口元素的值列表的映射表，实际上是“窗口并不真正拥有数据本身，只拥有数据的内容”）。
+窗口的状态由窗口算子维护，因此在[Window(1): 窗口的分配](/engineering/flink/window1.md)中提到了“窗口并不真正拥有数据”这一概念（实际从代码实现看，只是窗口类的实例没有拥有数据，在窗口状态中维护了窗口的```namespace```$\to$属于该窗口元素的值列表的映射表，是“窗口并不真正拥有数据本身，只拥有数据的内容”）。
 
 ```java
 // WindowOperator.class第150行
@@ -27,6 +27,33 @@ if (windowStateDescriptor != null) {
 ```
 
 ```windowState```既是一个键值对状态也是一个可追加状态（添加新的元素会追加到一个类似列表的缓存，或是被合并到一个累加器中），其工作方式为先设置状态的```namespace```（即指定Key），然后调用```AppendingState#add```方法更新状态时会向设置的```namespace```中追加一个元素。
+
+具体的状态实现类选择的调用栈如下：
+- ```WindowOperator#open```
+- ```AbstractStreamOperator#getOrCreateKeyedState```
+- ```StreamOperatorStateHandler#getOrCreateKeyedState```
+- ```AbstractKeyedStateBackend#getOrCreateKeyedState```
+- ```TtlStateFactory#createStateAndWrapWithTtlIfEnabled```
+
+然后根据系统是否设置了启用ttl和状态描述器的类型，会生成```TtlState```（HeapState的一层封装）或```HeapState```：
+```java
+// TtlStateFactory.class第59行
+public static <K, N, SV, TTLSV, S extends State, IS extends S> IS createStateAndWrapWithTtlIfEnabled(
+	TypeSerializer<N> namespaceSerializer,
+	StateDescriptor<S, SV> stateDesc,
+	KeyedStateBackend<K> stateBackend,
+	TtlTimeProvider timeProvider) throws Exception {
+	Preconditions.checkNotNull(namespaceSerializer);
+	Preconditions.checkNotNull(stateDesc);
+	Preconditions.checkNotNull(stateBackend);
+	Preconditions.checkNotNull(timeProvider);
+	return  stateDesc.getTtlConfig().isEnabled() ?
+		new TtlStateFactory<K, N, SV, TTLSV, S, IS>(
+			namespaceSerializer, stateDesc, stateBackend, timeProvider)
+			.createState() :
+		stateBackend.createInternalState(namespaceSerializer, stateDesc);
+}
+```
 
 ### 处理数据元素的状态变化
 
@@ -104,7 +131,44 @@ if (!windowAssigner.isEventTime() && isCleanupTime(triggerContext.window, timer.
 
 > Note that using ProcessWindowFunction for simple aggregates such as count is quite inefficient. The next section shows how a ReduceFunction or AggregateFunction can be combined with a ProcessWindowFunction to get both incremental aggregation and the added information of a ProcessWindowFunction.
 
-这个性能的差别是由```WindowOperator```实现```windowState```使用了不同的```InternalAppendingState```实现导致的（注意，当使用回收器时，所有的4种Function均使用了```ListState```，使用```ProcessWindowFunction```进行reduce和aggregate计算理论上不会损失性能）。Reduce和Aggregate Function使用了ReduceState，而Fold和Process Function使用了ListState。
+这个性能的差别是由```WindowOperator```实现```windowState```使用了不同的```InternalAppendingState```实现导致的（注意，当使用回收器时，所有的4种Function均使用了```ListState```，使用```ProcessWindowFunction```进行reduce和aggregate计算理论上不会损失性能）。Reduce、Aggregate、Fold和Process Function分别使用了```HeapReducingState```、```HeapAggregatingState```、```HeapFoldingState```和```HeapListState```作为实际的State实现（HeapFoldingState已被标记为```@Deprecated```并将用```HeapAggregatingState```代替）。
+
+### ReducingState
+
+以```HeapReducingState```为例（```HeapAggregatingState```与之类似），我们来看下```HeapReducingState```在```windowState.add()```时内部发生了什么：
+```java
+// HeapReducingState.class第93行
+@Override
+public void add(V value) throws IOException {
+
+	if (value == null) {
+		clear();
+		return;
+	}
+
+	try {
+		stateTable.transform(currentNamespace, value, reduceTransformation);
+	} catch (Exception e) {
+		throw new IOException("Exception while applying ReduceFunction in reducing state", e);
+	}
+}
+```
+
+后续的调用栈为：
+- ```StableTable#transform```
+- ```StateMap#transform```
+- ```StateTransformationFunction#apply```
+- ```ReduceFunction#reduce```
+
+其中```ReduceFunction```的描述是：
+
+> @return The combined value of both input values.
+
+可以看到，当执行```windowState.addWindow(T)```时，状态的更新已经完成了```ReduceFunction```的计算。
+
+### ListState
+
+
 
 ## 合并窗口状态
 
