@@ -1,4 +1,4 @@
-# Window(2): 窗口的触发与窗口元素回收器
+# Window(2): 触发器与回收器
 2020/10/15
 
 继[Window(1): 窗口的分配](/engineering/flink/window1.md)中介绍了当一个数据元素进入窗口算子后是如何被分配到具体的窗口中的。在本篇中，将继续介绍触发窗口计算的触发器以及触发器触发后、窗口计算方法执行前/后处理窗口元素的回收器。
@@ -83,7 +83,7 @@ public enum TriggerResult {
 }
 ```
 
-### 触发器触发的上下文
+### 触发器的触发
 
 在新数据元素进入算子或Processing Time计时器或Watermark进入算子时会计算触发结果，对应```WindowOperator#processElement```、```WindowOperator#onProcessingTime```和```WindowOperator#onEventTime```三个方法。
 
@@ -175,6 +175,81 @@ public void onEventTime(InternalTimer<K, W> timer) throws Exception {
 	}
 }
 ```
+
+## 窗口的回收器
+
+在设置了回收器```Evictor```后，窗口的逻辑实现由```WindowOperator```变成```EvictingWindowOperator```，其主要变化包括两个部分：
+1. 使用```evictingWindowState```代替了原先```windowState```来管理窗口状态
+2. 在```EvictingWindowOperator#emitWindowContent```方法的实现部分增加了回收器的处理流程
+
+### 回收器的实现
+
+回收器包括两个部分：具体逻辑实现（实现Evictor接口）和回收器上下文（实现Evictor.EvictorContext接口）
+
+```java
+public interface Evictor<T, W extends Window> extends Serializable {
+
+	void evictBefore(Iterable<TimestampedValue<T>> elements, int size, W window, EvictorContext evictorContext);
+
+	void evictAfter(Iterable<TimestampedValue<T>> elements, int size, W window, EvictorContext evictorContext);
+
+	interface EvictorContext {
+
+		long getCurrentProcessingTime();
+
+		MetricGroup getMetricGroup();
+
+		long getCurrentWatermark();
+	}
+}
+```
+
+```Evictor#evictBefore```方法对应在窗口计算前执行窗口元素的回收，```Evictor#evictAfter```方法对应在窗口计算后执行元素的回收。
+
+Flink提供了```TimeEvictor```（回收超过最大keepTime的元素）、```CountEvictor```（回收超过maxCount的元素）和```DeltaEvictor```（回收超过差值阈值的元素）的实现。
+
+### 回收器的触发
+
+回收器的触发在触发器返回```FIRE```（或```FIRE_AND_PURGE```）后，即```EvictingWindowOperator#emitWindowContents```方法的执行逻辑内部：
+
+```java
+// EvictingWindowOperator.class第336行
+private void emitWindowContents(W window, Iterable<StreamRecord<IN>> contents, ListState<StreamRecord<IN>> windowState) throws Exception {
+	timestampedCollector.setAbsoluteTimestamp(window.maxTimestamp());
+
+	// Work around type system restrictions...
+	FluentIterable<TimestampedValue<IN>> recordsWithTimestamp = FluentIterable
+		.from(contents)
+		.transform(new Function<StreamRecord<IN>, TimestampedValue<IN>>() {
+			@Override
+			public TimestampedValue<IN> apply(StreamRecord<IN> input) {
+				return TimestampedValue.from(input);
+			}
+		});
+	evictorContext.evictBefore(recordsWithTimestamp, Iterables.size(recordsWithTimestamp));
+
+	FluentIterable<IN> projectedContents = recordsWithTimestamp
+		.transform(new Function<TimestampedValue<IN>, IN>() {
+			@Override
+			public IN apply(TimestampedValue<IN> input) {
+				return input.getValue();
+			}
+		});
+
+	processContext.window = triggerContext.window;
+	userFunction.process(triggerContext.key, triggerContext.window, processContext, projectedContents, timestampedCollector);
+	evictorContext.evictAfter(recordsWithTimestamp, Iterables.size(recordsWithTimestamp));
+
+	//work around to fix FLINK-4369, remove the evicted elements from the windowState.
+	//this is inefficient, but there is no other way to remove elements from ListState, which is an AppendingState.
+	windowState.clear();
+	for (TimestampedValue<IN> record : recordsWithTimestamp) {
+		windowState.add(record.getStreamRecord());
+	}
+}
+```
+
+回收器不直接改变窗口的状态，仅对窗口状态导出的窗口元素值迭代器进行修改，再由窗口算子回填更新到窗口状态中。
 
 ## 参考文献
 

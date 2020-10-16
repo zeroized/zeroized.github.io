@@ -1,16 +1,15 @@
 # Window(3): 窗口的状态
+2020/10/16
 
-窗口的状态由窗口算子维护，因此在[Window(1): 窗口的分配](/engineering/flink/window1.md)中提到了“窗口并不真正拥有数据”这一概念（实际从代码实现看，只是窗口类的实例没有拥有数据，在窗口状态中维护了窗口的```namespace```$\to$属于该窗口元素的值列表的映射表，实际上是“窗口并不真正拥有数据本身，只拥有数据的内容”）。在窗口算子中，有3个状态变量用于维护窗口的状态：
+在前两篇[Window(1): 窗口的分配](/engineering/flink/window1.md)和[Window(2): 触发器与回收器](/engineering/flink/window2.md)中，我们分析了窗口分配器、触发器和回收器，这三者都不拥有窗口状态，但都会导致窗口状态的更新。本篇将解析窗口状态的实现以及窗口算子维护状态的过程。
 
 ## 无回收器的窗口状态
+
+窗口的状态由窗口算子维护，因此在[Window(1): 窗口的分配](/engineering/flink/window1.md)中提到了“窗口并不真正拥有数据”这一概念（实际从代码实现看，只是窗口类的实例没有拥有数据，在窗口状态中维护了窗口的```namespace```$\to$属于该窗口元素的值列表的映射表，实际上是“窗口并不真正拥有数据本身，只拥有数据的内容”）。
 
 ```java
 // WindowOperator.class第150行
 private transient InternalAppendingState<K, W, IN, ACC, ACC> windowState;
-
-private transient InternalMergingState<K, W, IN, ACC, ACC> windowMergingState;
-
-private transient InternalListState<K, VoidNamespace, Tuple2<W, W>> mergingSetsState;
 ```
 
 ```windowState```维护了每个窗口中存储的数据元素的**值**，```windowMergingState```维护了合并窗口的合并状态，```mergingSetsState```维护了合并窗口的元数据，后两者仅在需要合并窗口的场景下会实际使用（```windowAssigner instanceof MergingWindowAssigner```）。
@@ -99,16 +98,27 @@ if (!windowAssigner.isEventTime() && isCleanupTime(triggerContext.window, timer.
 }
 ```
 
-### 合并窗口状态
-
-### Reduce, Fold, Aggregate和Process Function的性能差异
+## Reduce, Fold, Aggregate和Process Function的性能差异
 
 官方文档中在ProcessWindowFunction的介绍末尾，添加了如下一段话：
 
 > Note that using ProcessWindowFunction for simple aggregates such as count is quite inefficient. The next section shows how a ReduceFunction or AggregateFunction can be combined with a ProcessWindowFunction to get both incremental aggregation and the added information of a ProcessWindowFunction.
 
-这个性能的差别是由```WindowOperator```实现```windowState```使用了不同的```InternalAppendingState```实现导致的（注意，当使用回收器时，使用```ProcessWindowFunction```理论上不会损失性能，所有的4种Function均使用了```ListState```）。Reduce和Aggregate Function使用了ReduceState，而Fold和Process Function使用了ListState。
+这个性能的差别是由```WindowOperator```实现```windowState```使用了不同的```InternalAppendingState```实现导致的（注意，当使用回收器时，所有的4种Function均使用了```ListState```，使用```ProcessWindowFunction```进行reduce和aggregate计算理论上不会损失性能）。Reduce和Aggregate Function使用了ReduceState，而Fold和Process Function使用了ListState。
+
+## 合并窗口状态
+
+```java
+// WindowOperator.class第
+private transient InternalMergingState<K, W, IN, ACC, ACC> windowMergingState;
+
+private transient InternalListState<K, VoidNamespace, Tuple2<W, W>> mergingSetsState;
+```
 
 ## 带有回收器的窗口状态
 
 带有回收器的窗口算子```EvictingWindowOperator```使用```evictingWindowState```在逻辑上替代了```windowState```，并使用null初始化```windowState```。
+
+```java
+private transient InternalListState<K, W, StreamRecord<IN>> evictingWindowState;
+```

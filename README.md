@@ -34,6 +34,8 @@ DeepRec-torch是一个基于pytorch的推荐系统模型实现框架，提供了
 
 ## 更新历史
 
+2020/10/16 Window(2): 触发器与回收器
+
 2020/10/15 Window(1): 窗口的分配
 
 2020/10/13 Time & Watermark(2): Watermark的传播与处理
@@ -41,12 +43,6 @@ DeepRec-torch是一个基于pytorch的推荐系统模型实现框架，提供了
 2020/10/11 Time & Watermark(1): 概念与Watermark的生成
 
 2020/08/02 DIN
-
-2020/07/13 AFM
-
-2020/07/06 NFM
-
-2020/06/30 DCN
 
 ---
 Powered by [docsify](https://docsify.js.org/)
