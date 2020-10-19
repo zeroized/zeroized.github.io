@@ -20,7 +20,7 @@ private transient InternalAppendingState<K, W, IN, ACC, ACC> windowState;
 
 ```java
 // WindowOperator.class第239行
-// open()方法
+// open() throws Exception方法
 if (windowStateDescriptor != null) {
 	windowState = (InternalAppendingState<K, W, IN, ACC, ACC>) getOrCreateKeyedState(windowSerializer, windowStateDescriptor);
 }
@@ -131,11 +131,12 @@ if (!windowAssigner.isEventTime() && isCleanupTime(triggerContext.window, timer.
 
 > Note that using ProcessWindowFunction for simple aggregates such as count is quite inefficient. The next section shows how a ReduceFunction or AggregateFunction can be combined with a ProcessWindowFunction to get both incremental aggregation and the added information of a ProcessWindowFunction.
 
-这个性能的差别是由```WindowOperator```实现```windowState```使用了不同的```InternalAppendingState```实现导致的（注意，当使用回收器时，所有的4种Function均使用了```ListState```，使用```ProcessWindowFunction```进行reduce和aggregate计算理论上不会损失性能）。Reduce、Aggregate、Fold和Process Function分别使用了```HeapReducingState```、```HeapAggregatingState```、```HeapFoldingState```和```HeapListState```作为实际的State实现（HeapFoldingState已被标记为```@Deprecated```并将用```HeapAggregatingState```代替）。
+这个性能的差别是由```WindowOperator```实现```windowState```使用了不同的```InternalAppendingState```实现导致的（注意，当使用回收器时（```evictor!=null```），所有的4种Function均使用了```ListState```，使用```ProcessWindowFunction```进行reduce和aggregate计算理论上不会损失性能）。Reduce、Aggregate、Fold和Process Function分别使用了```HeapReducingState```、```HeapAggregatingState```、```HeapFoldingState```和```HeapListState```作为实际的State实现（HeapFoldingState已被标记为```@Deprecated```并将用```HeapAggregatingState```代替）。
 
 ### ReducingState
 
-以```HeapReducingState```为例（```HeapAggregatingState```与之类似），我们来看下```HeapReducingState```在```windowState.add()```时内部发生了什么：
+我们来看下```HeapReducingState```在```windowState.add()```时内部发生了什么：
+
 ```java
 // HeapReducingState.class第93行
 @Override
@@ -164,25 +165,154 @@ public void add(V value) throws IOException {
 
 > @return The combined value of both input values.
 
-可以看到，当执行```windowState.addWindow(T)```时，状态的更新已经完成了```ReduceFunction```的计算。
+可以看到，当执行```windowState.addWindow(T)```时，状态的更新已经完成了```ReduceFunction```的计算。在获取整个窗口的状态时，得到的是```reducing```后的结果：
+```java
+// HeapReducingState.class第88行
+@Override
+public V get() {
+	return getInternal();
+}
+```
+
+### AggregatingState
+
+AggregatingState的工作流程与ReducingState基本一致。唯一的不同点是，由于Aggregating操作的计算结果类型可能与数据元素类型一致，在最后需要对累加器的结果进行一次转换：
+
+```java
+// HeapAggregatingState.class第90行	
+@Override
+public OUT get() {
+	ACC accumulator = getInternal();
+	return accumulator != null ? aggregateTransformation.aggFunction.getResult(accumulator) : null;
+}
+```
 
 ### ListState
 
+而ListState无论是过程还是类的构造都简单得多，其中```AppendingState#add```的实现仅仅是向目标```namespace```的列表中添加一个新的元素（不存在则创建）；在获取整个窗口状态时，得到的也是整个列表：
 
+```java
+// HeapListState.class第89行
+@Override
+public void add(V value) {
+	Preconditions.checkNotNull(value, "You cannot add null to a ListState.");
+
+	final N namespace = currentNamespace;
+
+	final StateTable<K, N, List<V>> map = stateTable;
+	List<V> list = map.get(namespace);
+
+	if (list == null) {
+		list = new ArrayList<>();
+		map.put(namespace, list);
+	}
+	list.add(value);
+}
+
+// HeapListState.class第84行
+@Override
+public Iterable<V> get() {
+	return getInternal();
+}
+```
+
+这就意味着，使用```ProcessWindowFunction```进行窗口处理，在元素进入窗口时仅会被追加到窗口状态的末尾；而不会像R```educingFunction```和```AggregatingFunction```一样对每个进入窗口的元素立即进行聚合。
 
 ## 合并窗口状态
 
+在合并窗口场景下，窗口算子会拥有两个额外的状态：
+
 ```java
-// WindowOperator.class第
+// WindowOperator.class第156行
 private transient InternalMergingState<K, W, IN, ACC, ACC> windowMergingState;
 
 private transient InternalListState<K, VoidNamespace, Tuple2<W, W>> mergingSetsState;
+
+// WindowOperator.class第244行
+// open() throws Exception方法
+if (windowAssigner instanceof MergingWindowAssigner) {
+
+	// store a typed reference for the state of merging windows - sanity check
+	if (windowState instanceof InternalMergingState) {
+		windowMergingState = (InternalMergingState<K, W, IN, ACC, ACC>) windowState;
+	}
+
+	else if (windowState != null) {
+		throw new IllegalStateException(
+				"The window uses a merging assigner, but the window state is not mergeable.");
+	}
+
+	@SuppressWarnings("unchecked")
+	final Class<Tuple2<W, W>> typedTuple = (Class<Tuple2<W, W>>) (Class<?>) Tuple2.class;
+
+	final TupleSerializer<Tuple2<W, W>> tupleSerializer = new TupleSerializer<>(
+			typedTuple,
+			new TypeSerializer[] {windowSerializer, windowSerializer});
+
+	final ListStateDescriptor<Tuple2<W, W>> mergingSetsStateDescriptor =
+			new ListStateDescriptor<>("merging-window-set", tupleSerializer);
+
+	// get the state that stores the merging sets
+	mergingSetsState = (InternalListState<K, VoidNamespace, Tuple2<W, W>>)
+			getOrCreateKeyedState(VoidNamespaceSerializer.INSTANCE, mergingSetsStateDescriptor);
+	mergingSetsState.setCurrentNamespace(VoidNamespace.INSTANCE);
+}
+```
+
+其中，```windowMergingState```用于记录合并窗口的状态，是```windowState```的一个用于合并的引用，在触发窗口合并时，会执行窗口状态的合并方法```InternalMergingState#mergeNamespaces```，执行ReducingState或AggregatingState的```ReducingFunction```/```AggregatingFunction```，或是执行ListState的```List#addAll```。
+
+```mergingSetsState```则是记录了窗口的元数据。```mergingSetsState```的变更位于```MergeWindowSet#persist```方法处（```MergeWindowSet```的```state```变量即```mergingSetsState```的引用），在合并过程中的状态变化见[Window(1): 窗口的分配](/engineering/flink/window1.md)中对窗口合并的相关描述。
+
+```java
+// MergingWindowSet.class第102行
+public void persist() throws Exception {
+	if (!mapping.equals(initialMapping)) {
+		state.clear();
+		for (Map.Entry<W, W> window : mapping.entrySet()) {
+			state.add(new Tuple2<>(window.getKey(), window.getValue()));
+		}
+	}
+}
 ```
 
 ## 带有回收器的窗口状态
 
-带有回收器的窗口算子```EvictingWindowOperator```使用```evictingWindowState```在逻辑上替代了```windowState```，并使用null初始化```windowState```。
+带有回收器的窗口算子```EvictingWindowOperator```使用```evictingWindowState```在逻辑上替代了```windowState```，并使用null初始化```windowState```（同时也导致```windowMergingState```也不再使用，直接用```evictingWindowState```而不是另一个引用记录合并窗口状态）。使用回收器时，状态一定为ListState。
 
 ```java
+// EvictingWindowOperator.class第79行
 private transient InternalListState<K, W, StreamRecord<IN>> evictingWindowState;
+
+// EvictingWindowOperator.class第83行
+public EvictingWindowOperator(WindowAssigner<? super IN, W> windowAssigner,
+		TypeSerializer<W> windowSerializer,
+		KeySelector<IN, K> keySelector,
+		TypeSerializer<K> keySerializer,
+		StateDescriptor<? extends ListState<StreamRecord<IN>>, ?> windowStateDescriptor,
+		InternalWindowFunction<Iterable<IN>, OUT, K, W> windowFunction,
+		Trigger<? super IN, ? super W> trigger,
+		Evictor<? super IN, ? super W> evictor,
+		long allowedLateness,
+		OutputTag<IN> lateDataOutputTag) {
+
+	super(windowAssigner, windowSerializer, keySelector,
+		keySerializer, null, windowFunction, trigger, allowedLateness, lateDataOutputTag);
+
+	this.evictor = checkNotNull(evictor);
+	this.evictingWindowStateDescriptor = checkNotNull(windowStateDescriptor);
+}
+
+// EvictingWindowOperator.class第429行
+@Override
+public void open() throws Exception {
+	super.open();
+
+	evictorContext = new EvictorContext(null, null);
+	evictingWindowState = (InternalListState<K, W, StreamRecord<IN>>)
+			getOrCreateKeyedState(windowSerializer, evictingWindowStateDescriptor);
+}
 ```
+
+带有回收器的窗口算子的合并窗口流程与无回收器算子一致，均为```MergeWindowSet#persist```方法。
+
+由于回收器在执行窗口计算方法前后会回收窗口中的元素，因此在触发器返回```FIRE```后，即```EvictingWindowOperator#emitWindowContents```处需要对窗口的状态进行更新，见[Window(2): 触发器与回收器](/engineering/flink/window2.md)中对回收器的触发的相关描述。
