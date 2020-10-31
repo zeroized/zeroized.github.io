@@ -32,7 +32,7 @@ if (windowStateDescriptor != null) {
 - ```WindowOperator#open```
 - ```AbstractStreamOperator#getOrCreateKeyedState```
 - ```StreamOperatorStateHandler#getOrCreateKeyedState```
-- ```AbstractKeyedStateBackend#getOrCreateKeyedState```
+- ```AbstractKeyedStateBackend#getOrCreateKeyedState```(```HeapKeyedStateBackend#getOrCreateKeyedState```)
 - ```TtlStateFactory#createStateAndWrapWithTtlIfEnabled```
 
 然后根据系统是否设置了启用ttl和状态描述器的类型，会生成```TtlState```（HeapState的一层封装）或```HeapState```：
