@@ -91,7 +91,7 @@ public interface RichFunction extends Function {
 }
 ```
 
-常用的如```RichMapFunction```等类名带有Rich的UDF类都是```RichFunction```接口的实现，注意```ProcessFunction```类和```KeyedProcessFunction```类也是一个RichFunction。这些UDF可以通过```AbstractRichFunction#getRuntimeContext```获取运行时上下文```StreamingRuntimeContext```，然后从中获取任意一种类型的状态。以ValueState为例，其实际获取状态的调用栈如下：
+常用的如```RichMapFunction```等类名带有Rich的UDF类都是```RichFunction```接口的实现，注意```ProcessFunction```类和```KeyedProcessFunction```类也是一个RichFunction。这些UDF可以通过```AbstractRichFunction#getRuntimeContext```获取运行时上下文```StreamingRuntimeContext```，然后从中获取任意一种类型的状态。其实际获取状态的调用栈如下：
 
 - ```StreamingRuntimeContext#getState```
 - ```DefaultKeyedStateStore#getState```
@@ -182,11 +182,283 @@ public <N, SV, SEV, S extends State, IS extends S> IS createInternalState(
 
 在创建一个新的状态实例前，向状态表中注册一个新的状态，其主要作用是用于快照，这部分将在后续介绍snapshot、checkpoint等相关机制时介绍。需要注意的是，在调用栈中向```AbstractKeyedStateBackend#getPartitionedState```中传入的参数为```VoidNamespace.INSTANCE```，```VoidNamespaceSerializer.INSTANCE```和```stateDescriptor```，这就意味着keyedState是没有namespace的（对比windowState，其namespace标识了窗口）。
 
-### Ttl State
+### Time-To-Live
 
-> A time-to-live (TTL) can be assigned to the keyed state of any type. If a TTL is configured and a state value has expired, the stored value will be cleaned up on a best effort basis which is discussed in more detail below.
+TtlState是HeapState的一个装饰器，提供了根据时间使状态过期的功能（目前只有Processing Time）。TTL的具体使用方法在官方文档[Working With State](https://ci.apache.org/projects/flink/flink-docs-release-1.11/dev/stream/state/state.html#state-time-to-live-ttl)中的State Time-To-Live (TTL)章节能够看到，在这里就不复述了。TtlState实际上是用```TtlValue```对HeapState保存的值进行了一次装饰，添加了timestamp属性：
 
+```java
+// TtlValue.class
+public class TtlValue<T> implements Serializable {
+	private static final long serialVersionUID = 5221129704201125020L;
 
+	@Nullable
+	private final T userValue;
+	private final long lastAccessTimestamp;
+
+	public TtlValue(@Nullable T userValue, long lastAccessTimestamp) {
+		this.userValue = userValue;
+		this.lastAccessTimestamp = lastAccessTimestamp;
+	}
+
+	@Nullable
+	public T getUserValue() {
+		return userValue;
+	}
+
+	public long getLastAccessTimestamp() {
+		return lastAccessTimestamp;
+	}
+}
+```
+
+可以看到lastAccessTimestamp是不可变的，每次更新TTL时，都会创建一个新的```TtlValue```替换原有的状态值。
+
+#### TTL状态
+
+TtlState与HeapState创建过程的分支点位于```TtlStateFactory#createStateAndWrapWithTtlIfEnabled```处：当设置了Ttl后，这一方法返回了```TtlStateFactory#createState```的结果：
+
+```java
+// TtlStateFactory.class第119行
+private IS createState() throws Exception {
+	SupplierWithException<IS, Exception> stateFactory = stateFactories.get(stateDesc.getClass());
+	if (stateFactory == null) {
+		String message = String.format("State %s is not supported by %s",
+			stateDesc.getClass(), TtlStateFactory.class);
+		throw new FlinkRuntimeException(message);
+	}
+	IS state = stateFactory.get();
+	if (incrementalCleanup != null) {
+		incrementalCleanup.setTtlState((AbstractTtlState<K, N, ?, TTLSV, ?>) state);
+	}
+	return state;
+}
+```
+
+其中```stateFactory.get()```即对应状态类型的```create```方法，如```ValueState```对应```createValueState()```方法：
+
+```java
+// TtlStateFactory.class第134行
+private IS createValueState() throws Exception {
+	ValueStateDescriptor<TtlValue<SV>> ttlDescriptor = new ValueStateDescriptor<>(
+		stateDesc.getName(), new TtlSerializer<>(LongSerializer.INSTANCE, stateDesc.getSerializer()));
+	return (IS) new TtlValueState<>(createTtlStateContext(ttlDescriptor));
+}
+```
+
+创建一个TtlState的构造参数是```TtlStateContext```：
+
+```java
+private <OIS extends State, TTLS extends State, V, TTLV> TtlStateContext<OIS, V>
+	createTtlStateContext(StateDescriptor<TTLS, TTLV> ttlDescriptor) throws Exception {
+
+	ttlDescriptor.enableTimeToLive(stateDesc.getTtlConfig()); // also used by RocksDB backend for TTL compaction filter config
+	OIS originalState = (OIS) stateBackend.createInternalState(
+		namespaceSerializer, ttlDescriptor, getSnapshotTransformFactory());
+	return new TtlStateContext<>(
+		originalState, ttlConfig, timeProvider, (TypeSerializer<V>) stateDesc.getSerializer(),
+		registerTtlIncrementalCleanupCallback((InternalKvState<?, ?, ?>) originalState));
+}
+```
+
+```TtlStateContext```提供了TtlState所需的所有信息：需要装饰的原始HeapState、Ttl配置信息、时间供应器（实际上就是```System::currentTimeMillis```，目前只支持Processing Time）、状态描述的序列化器以及TTL增量清理回调方法。清理回调方法只在获取状态和更新状态前异步执行，对状态提供的功能而言是透明的。此处以ValueState为例，```TtlValueState```由3层结构组成，分别是提供基本TTL功能的```AbstractTtlDecorator```、提供State基本功能的```AbstractTtlState```（namespace、serializer等）、以及提供状态获取、更新功能的```TtlValueState```。
+
+<details>
+<summary>TtlValueState</summary>
+
+```java
+// TtlValueState.class
+class TtlValueState<K, N, T>
+	extends AbstractTtlState<K, N, T, TtlValue<T>, InternalValueState<K, N, TtlValue<T>>>
+	implements InternalValueState<K, N, T> {
+	TtlValueState(TtlStateContext<InternalValueState<K, N, TtlValue<T>>, T> tTtlStateContext) {
+		super(tTtlStateContext);
+	}
+
+	@Override
+	public T value() throws IOException {
+		accessCallback.run();
+		return getWithTtlCheckAndUpdate(original::value, original::update);
+	}
+
+	@Override
+	public void update(T value) throws IOException {
+		accessCallback.run();
+		original.update(wrapWithTs(value));
+	}
+
+	@Nullable
+	@Override
+	public TtlValue<T> getUnexpiredOrNull(@Nonnull TtlValue<T> ttlValue) {
+		return expired(ttlValue) ? null : ttlValue;
+	}
+}
+```
+</details>
+
+<details>
+<summary>AbstractTtlState</summary>
+
+```java
+// AbstractTtlState.class
+abstract class AbstractTtlState<K, N, SV, TTLSV, S extends InternalKvState<K, N, TTLSV>>
+	extends AbstractTtlDecorator<S>
+	implements InternalKvState<K, N, SV> {
+	private final TypeSerializer<SV> valueSerializer;
+
+	/** This registered callback is to be called whenever state is accessed for read or write. */
+	final Runnable accessCallback;
+
+	AbstractTtlState(TtlStateContext<S, SV> ttlStateContext) {
+		super(ttlStateContext.original, ttlStateContext.config, ttlStateContext.timeProvider);
+		this.valueSerializer = ttlStateContext.valueSerializer;
+		this.accessCallback = ttlStateContext.accessCallback;
+	}
+
+	<SE extends Throwable, CE extends Throwable, T> T getWithTtlCheckAndUpdate(
+		SupplierWithException<TtlValue<T>, SE> getter,
+		ThrowingConsumer<TtlValue<T>, CE> updater) throws SE, CE {
+		return getWithTtlCheckAndUpdate(getter, updater, original::clear);
+	}
+
+	@Override
+	public TypeSerializer<K> getKeySerializer() {
+		return original.getKeySerializer();
+	}
+
+	@Override
+	public TypeSerializer<N> getNamespaceSerializer() {
+		return original.getNamespaceSerializer();
+	}
+
+	@Override
+	public TypeSerializer<SV> getValueSerializer() {
+		return valueSerializer;
+	}
+
+	@Override
+	public void setCurrentNamespace(N namespace) {
+		original.setCurrentNamespace(namespace);
+	}
+
+	@Override
+	public byte[] getSerializedValue(
+		byte[] serializedKeyAndNamespace,
+		TypeSerializer<K> safeKeySerializer,
+		TypeSerializer<N> safeNamespaceSerializer,
+		TypeSerializer<SV> safeValueSerializer) {
+		throw new FlinkRuntimeException("Queryable state is not currently supported with TTL.");
+	}
+
+	@Override
+	public void clear() {
+		original.clear();
+		accessCallback.run();
+	}
+
+	/**
+	 * Check if state has expired or not and update it if it has partially expired.
+	 *
+	 * @return either non expired (possibly updated) state or null if the state has expired.
+	 */
+	@Nullable
+	public abstract TTLSV getUnexpiredOrNull(@Nonnull TTLSV ttlValue);
+
+	@Override
+	public StateIncrementalVisitor<K, N, SV> getStateIncrementalVisitor(int recommendedMaxNumberOfReturnedRecords) {
+		throw new UnsupportedOperationException();
+	}
+}
+```
+</details>
+
+<details>
+<summary>AbstractTtlDecorator</summary>
+
+```java
+abstract class AbstractTtlDecorator<T> {
+	/** Wrapped original state handler. */
+	final T original;
+
+	final StateTtlConfig config;
+
+	final TtlTimeProvider timeProvider;
+
+	/** Whether to renew expiration timestamp on state read access. */
+	final boolean updateTsOnRead;
+
+	/** Whether to renew expiration timestamp on state read access. */
+	final boolean returnExpired;
+
+	/** State value time to live in milliseconds. */
+	final long ttl;
+
+	AbstractTtlDecorator(
+		T original,
+		StateTtlConfig config,
+		TtlTimeProvider timeProvider) {
+		Preconditions.checkNotNull(original);
+		Preconditions.checkNotNull(config);
+		Preconditions.checkNotNull(timeProvider);
+		this.original = original;
+		this.config = config;
+		this.timeProvider = timeProvider;
+		this.updateTsOnRead = config.getUpdateType() == StateTtlConfig.UpdateType.OnReadAndWrite;
+		this.returnExpired = config.getStateVisibility() == StateTtlConfig.StateVisibility.ReturnExpiredIfNotCleanedUp;
+		this.ttl = config.getTtl().toMilliseconds();
+	}
+
+	<V> V getUnexpired(TtlValue<V> ttlValue) {
+		return ttlValue == null || (!returnExpired && expired(ttlValue)) ? null : ttlValue.getUserValue();
+	}
+
+	<V> boolean expired(TtlValue<V> ttlValue) {
+		return TtlUtils.expired(ttlValue, ttl, timeProvider);
+	}
+
+	<V> TtlValue<V> wrapWithTs(V value) {
+		return TtlUtils.wrapWithTs(value, timeProvider.currentTimestamp());
+	}
+
+	<V> TtlValue<V> rewrapWithNewTs(TtlValue<V> ttlValue) {
+		return wrapWithTs(ttlValue.getUserValue());
+	}
+
+	<SE extends Throwable, CE extends Throwable, CLE extends Throwable, V> V getWithTtlCheckAndUpdate(
+		SupplierWithException<TtlValue<V>, SE> getter,
+		ThrowingConsumer<TtlValue<V>, CE> updater,
+		ThrowingRunnable<CLE> stateClear) throws SE, CE, CLE {
+		TtlValue<V> ttlValue = getWrappedWithTtlCheckAndUpdate(getter, updater, stateClear);
+		return ttlValue == null ? null : ttlValue.getUserValue();
+	}
+
+	<SE extends Throwable, CE extends Throwable, CLE extends Throwable, V> TtlValue<V> getWrappedWithTtlCheckAndUpdate(
+		SupplierWithException<TtlValue<V>, SE> getter,
+		ThrowingConsumer<TtlValue<V>, CE> updater,
+		ThrowingRunnable<CLE> stateClear) throws SE, CE, CLE {
+		TtlValue<V> ttlValue = getter.get();
+		if (ttlValue == null) {
+			return null;
+		} else if (expired(ttlValue)) {
+			stateClear.run();
+			if (!returnExpired) {
+				return null;
+			}
+		} else if (updateTsOnRead) {
+			updater.accept(rewrapWithNewTs(ttlValue));
+		}
+		return ttlValue;
+	}
+}
+```
+</details>
+
+获取状态最终通过```AbstractTtlDecorator#getWrappedWithTtlCheckAndUpdate```方法返回状态值。其中可以看到，只要状态过期，就会执行```HeapValueState#clear```方法清除状态的值（如同官方文档中对TTL状态的描述“在获取状态时清除过期状态”），然后根据TTL设置的```ReturnExpiredIfNotCleanedUp```决定是否要返回该过期值。如果设置了```OnReadAndWrite```的TTL刷新策略，则会使用当前时间戳创建一个新的TtlValue并更新到其装饰的```HeapValueState```中。
+
+其他的TtlState的处理方式和```TtlValueState```基本一致：```TtlReducingState```和```TtlAggregatingState```是丢弃整个过期的结果（本身状态只保存了reduce和aggregate的结果）；```TtlListState```是遍历状态中的列表，并将未过期的值重新组成一个新的列表，代替原来的状态列表；```TtlMapState```直接将过期的<key,value>对丢弃。
+
+#### 增量清理回调
+
+增量清理，即通过设置```TtlConfig.Builder```的```cleanupIncrementally(int,boolean)```方法增加的后台状态清理功能
 
 ## Operator State
 
