@@ -17,7 +17,7 @@
 
 ### 状态的初始化
 
-从上一节的获取状态的代码中可以看到，在获取状态时，实际是通过```KeyedStateStore#getxxState```方法获取状态。```KeyedStateStore```由```StreamOperatorStateHandler```初始化，初始化过程位于```AbstractStreamOperator#initializeState```：
+从获取状态的代码中可以看到，在获取状态时，实际是通过```KeyedStateStore#getxxState```方法获取状态。```KeyedStateStore```由```StreamOperatorStateHandler```初始化，初始化过程位于```AbstractStreamOperator#initializeState```：
 
 ```java
 // AbstractStreamOperator.class第237行
@@ -461,78 +461,6 @@ abstract class AbstractTtlDecorator<T> {
 增量清理，即通过设置```TtlConfig.Builder```的```cleanupIncrementally(int,boolean)```方法增加的后台状态清理功能。增量清理的实现位于```TtlIncrementalCleanup```类中，由```TtlStateFactory#registerTtlIncrementalCleanupCallback```构造回调函数，在每次访问状态和更新状态时执行。
 
 ```java
-// TtlIncrementalCleanup.class
-class TtlIncrementalCleanup<K, N, S> {
-	/** Global state entry iterator is advanced for {@code cleanupSize} entries. */
-	@Nonnegative
-	private final int cleanupSize;
-
-	/** Particular state with TTL object is used to check whether currently iterated entry has expired. */
-	private AbstractTtlState<K, N, ?, S, ?> ttlState;
-
-	/** Global state entry iterator, advanced for {@code cleanupSize} entries every state and/or record processing. */
-	private StateIncrementalVisitor<K, N, S> stateIterator;
-
-	/**
-	 * TtlIncrementalCleanup constructor.
-	 *
-	 * @param cleanupSize max number of queued keys to incrementally cleanup upon state access
-	 */
-	TtlIncrementalCleanup(@Nonnegative int cleanupSize) {
-		this.cleanupSize = cleanupSize;
-	}
-
-	void stateAccessed() {
-		initIteratorIfNot();
-		try {
-			runCleanup();
-		} catch (Throwable t) {
-			throw new FlinkRuntimeException("Failed to incrementally clean up state with TTL", t);
-		}
-	}
-
-	private void initIteratorIfNot() {
-		if (stateIterator == null || !stateIterator.hasNext()) {
-			stateIterator = ttlState.original.getStateIncrementalVisitor(cleanupSize);
-		}
-	}
-
-	private void runCleanup() {
-		int entryNum = 0;
-		Collection<StateEntry<K, N, S>> nextEntries;
-		while (
-			entryNum < cleanupSize &&
-			stateIterator.hasNext() &&
-			!(nextEntries = stateIterator.nextEntries()).isEmpty()) {
-
-			for (StateEntry<K, N, S> state : nextEntries) {
-				S cleanState = ttlState.getUnexpiredOrNull(state.getState());
-				if (cleanState == null) {
-					stateIterator.remove(state);
-				} else if (cleanState != state.getState()) {
-					stateIterator.update(state, cleanState);
-				}
-			}
-
-			entryNum += nextEntries.size();
-		}
-	}
-
-	/**
-	 * As TTL state wrapper depends on this class through access callback,
-	 * it has to be set here after its construction is done.
-	 */
-	public void setTtlState(@Nonnull AbstractTtlState<K, N, ?, S, ?> ttlState) {
-		this.ttlState = ttlState;
-	}
-
-	int getCleanupSize() {
-		return cleanupSize;
-	}
-}
-```
-
-```java
 // TtlStateFactory.class第210行
 private Runnable registerTtlIncrementalCleanupCallback(InternalKvState<?, ?, ?> originalState) {
 	StateTtlConfig.IncrementalCleanupStrategy config =
@@ -545,6 +473,43 @@ private Runnable registerTtlIncrementalCleanupCallback(InternalKvState<?, ?, ?> 
 		stateBackend.registerKeySelectionListener(stub -> callback.run());
 	}
 	return callback;
+}
+
+// TtlIncrementalCleanup.class第55行
+void stateAccessed() {
+	initIteratorIfNot();
+	try {
+		runCleanup();
+	} catch (Throwable t) {
+		throw new FlinkRuntimeException("Failed to incrementally clean up state with TTL", t);
+	}
+}
+
+private void initIteratorIfNot() {
+	if (stateIterator == null || !stateIterator.hasNext()) {
+		stateIterator = ttlState.original.getStateIncrementalVisitor(cleanupSize);
+	}
+}
+
+private void runCleanup() {
+	int entryNum = 0;
+	Collection<StateEntry<K, N, S>> nextEntries;
+	while (
+		entryNum < cleanupSize &&
+		stateIterator.hasNext() &&
+		!(nextEntries = stateIterator.nextEntries()).isEmpty()) {
+
+		for (StateEntry<K, N, S> state : nextEntries) {
+			S cleanState = ttlState.getUnexpiredOrNull(state.getState());
+			if (cleanState == null) {
+				stateIterator.remove(state);
+			} else if (cleanState != state.getState()) {
+				stateIterator.update(state, cleanState);
+			}
+		}
+
+		entryNum += nextEntries.size();
+	}
 }
 ```
 
