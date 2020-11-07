@@ -1,4 +1,4 @@
-# State(1): 状态的实现
+# State(1): 状态的实现（上）
 2020/10/26
 
 注：源代码为Flink1.11.0版本
@@ -454,13 +454,101 @@ abstract class AbstractTtlDecorator<T> {
 
 获取状态最终通过```AbstractTtlDecorator#getWrappedWithTtlCheckAndUpdate```方法返回状态值。其中可以看到，只要状态过期，就会执行```HeapValueState#clear```方法清除状态的值（如同官方文档中对TTL状态的描述“在获取状态时清除过期状态”），然后根据TTL设置的```ReturnExpiredIfNotCleanedUp```决定是否要返回该过期值。如果设置了```OnReadAndWrite```的TTL刷新策略，则会使用当前时间戳创建一个新的TtlValue并更新到其装饰的```HeapValueState```中。
 
-其他的TtlState的处理方式和```TtlValueState```基本一致：```TtlReducingState```和```TtlAggregatingState```是丢弃整个过期的结果（本身状态只保存了reduce和aggregate的结果）；```TtlListState```是遍历状态中的列表，并将未过期的值重新组成一个新的列表，代替原来的状态列表；```TtlMapState```直接将过期的<key,value>对丢弃。
+其他的TtlState的处理方式和```TtlValueState```基本一致：```TtlReducingState```和```TtlAggregatingState```是丢弃整个过期的结果（本身状态只保存了reduce和aggregate的结果）；```TtlListState```是遍历状态中的列表，并将未过期的值重新组成一个新的列表，代替原来的状态列表；```TtlMapState```直接将过期的<key,value>丢弃。
 
-#### 增量清理回调
+#### 增量清理
 
-增量清理，即通过设置```TtlConfig.Builder```的```cleanupIncrementally(int,boolean)```方法增加的后台状态清理功能
+增量清理，即通过设置```TtlConfig.Builder```的```cleanupIncrementally(int,boolean)```方法增加的后台状态清理功能。增量清理的实现位于```TtlIncrementalCleanup```类中，由```TtlStateFactory#registerTtlIncrementalCleanupCallback```构造回调函数，在每次访问状态和更新状态时执行。
 
-## Operator State
+```java
+// TtlIncrementalCleanup.class
+class TtlIncrementalCleanup<K, N, S> {
+	/** Global state entry iterator is advanced for {@code cleanupSize} entries. */
+	@Nonnegative
+	private final int cleanupSize;
+
+	/** Particular state with TTL object is used to check whether currently iterated entry has expired. */
+	private AbstractTtlState<K, N, ?, S, ?> ttlState;
+
+	/** Global state entry iterator, advanced for {@code cleanupSize} entries every state and/or record processing. */
+	private StateIncrementalVisitor<K, N, S> stateIterator;
+
+	/**
+	 * TtlIncrementalCleanup constructor.
+	 *
+	 * @param cleanupSize max number of queued keys to incrementally cleanup upon state access
+	 */
+	TtlIncrementalCleanup(@Nonnegative int cleanupSize) {
+		this.cleanupSize = cleanupSize;
+	}
+
+	void stateAccessed() {
+		initIteratorIfNot();
+		try {
+			runCleanup();
+		} catch (Throwable t) {
+			throw new FlinkRuntimeException("Failed to incrementally clean up state with TTL", t);
+		}
+	}
+
+	private void initIteratorIfNot() {
+		if (stateIterator == null || !stateIterator.hasNext()) {
+			stateIterator = ttlState.original.getStateIncrementalVisitor(cleanupSize);
+		}
+	}
+
+	private void runCleanup() {
+		int entryNum = 0;
+		Collection<StateEntry<K, N, S>> nextEntries;
+		while (
+			entryNum < cleanupSize &&
+			stateIterator.hasNext() &&
+			!(nextEntries = stateIterator.nextEntries()).isEmpty()) {
+
+			for (StateEntry<K, N, S> state : nextEntries) {
+				S cleanState = ttlState.getUnexpiredOrNull(state.getState());
+				if (cleanState == null) {
+					stateIterator.remove(state);
+				} else if (cleanState != state.getState()) {
+					stateIterator.update(state, cleanState);
+				}
+			}
+
+			entryNum += nextEntries.size();
+		}
+	}
+
+	/**
+	 * As TTL state wrapper depends on this class through access callback,
+	 * it has to be set here after its construction is done.
+	 */
+	public void setTtlState(@Nonnull AbstractTtlState<K, N, ?, S, ?> ttlState) {
+		this.ttlState = ttlState;
+	}
+
+	int getCleanupSize() {
+		return cleanupSize;
+	}
+}
+```
+
+```java
+// TtlStateFactory.class第210行
+private Runnable registerTtlIncrementalCleanupCallback(InternalKvState<?, ?, ?> originalState) {
+	StateTtlConfig.IncrementalCleanupStrategy config =
+		ttlConfig.getCleanupStrategies().getIncrementalCleanupStrategy();
+	boolean cleanupConfigured = config != null && incrementalCleanup != null;
+	boolean isCleanupActive = cleanupConfigured &&
+		isStateIteratorSupported(originalState, incrementalCleanup.getCleanupSize());
+	Runnable callback = isCleanupActive ? incrementalCleanup::stateAccessed : () -> { };
+	if (isCleanupActive && config.runCleanupForEveryRecord()) {
+		stateBackend.registerKeySelectionListener(stub -> callback.run());
+	}
+	return callback;
+}
+```
+
+```TtlStateFactory```在注册增量清理回调函数时，将```stateAccessed```方法注册为清理方法：首先从状态的```stateTable```中获取至多```cleanupSize```个状态，然后逐一检查这些状态是否过期，并直接将过期的状态从tateTable中移除。
 
 ## 参考文献
 
