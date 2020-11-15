@@ -1,4 +1,4 @@
-# State(2): 状态的实现（下）
+# State(2): 状态的实现(下)
 2020/11/07
 
 在[State(1): 状态的实现（上）](/engineering/flink/state1.md)中介绍了keyed状态初始化、创建和获取的实现、以及Time-To-Live机制的工作方式。本篇将研究无论是是keyed数据流还是non-keyed数据流都能使用的算子状态的原理。
