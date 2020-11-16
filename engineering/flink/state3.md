@@ -44,49 +44,6 @@ Checkpointing请求首先会由```CheckpointRequestDecider#chooseRequestToExecut
 
 ```java
 // CheckpointRequestDecider.class第96行
-/*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-package org.apache.flink.runtime.checkpoint;
-
-import org.apache.flink.annotation.VisibleForTesting;
-import org.apache.flink.runtime.checkpoint.CheckpointCoordinator.CheckpointTriggerRequest;
-import org.apache.flink.util.Preconditions;
-import org.apache.flink.util.clock.Clock;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import javax.annotation.concurrent.GuardedBy;
-
-import java.util.Comparator;
-import java.util.NavigableSet;
-import java.util.Optional;
-import java.util.PriorityQueue;
-import java.util.TreeSet;
-import java.util.function.Consumer;
-import java.util.function.Supplier;
-
-import static java.lang.System.currentTimeMillis;
-import static java.lang.System.identityHashCode;
-import static org.apache.flink.runtime.checkpoint.CheckpointFailureReason.MINIMUM_TIME_BETWEEN_CHECKPOINTS;
-import static org.apache.flink.runtime.checkpoint.CheckpointFailureReason.TOO_MANY_CHECKPOINT_REQUESTS;
-
-@SuppressWarnings("ConstantConditions")
 class CheckpointRequestDecider {
 	private static final Logger LOG = LoggerFactory.getLogger(CheckpointRequestDecider.class);
 	private static final int LOG_TIME_IN_QUEUE_THRESHOLD_MS = 100;
@@ -361,9 +318,9 @@ private void startTriggeringCheckpoint(CheckpointTriggerRequest request) {
 
 1. 通过```initializeCheckpoint```方法初始化checkpoint并通过```createPendingCheckpoint```方法构造一个pendingCheckpoint（已经启动、但没有收到所有task ack的checkpoint）
 2. 通过```snapshotMasterState```方法快照master的状态
-3. （与2不分先后）通过```OperatorCoordinatorCheckpoints#triggerAndAcknowledgeAllCoordinatorCheckpointsWithCompletion```通知并触发算子协调器的checkpointing流程
-4. 通过```snapshotTaskState```方法使用RPC调用每个source算子的task executor执行```Task#triggerCheckpointBarrier```
-5. 调用所有算子协调器checkpoint上下文的```OperatorCoordinatorCheckpointContext#afterSourceBarrierInjection```方法
+3. （与2不分先后）通过```OperatorCoordinatorCheckpoints#triggerAndAcknowledgeAllCoordinatorCheckpointsWithCompletion```通知并触发算子协调器的checkpointing流程（只有Source算子有对应的协调器```SourceCoordinator```），该操作会关闭```OperatorEventValve```
+4. 通过```snapshotTaskState```方法使用RPC调用每个source算子的task executor执行```Task#triggerCheckpointBarrier```向数据流中插入Barrier
+5. 调用所有算子协调器checkpoint上下文的```OperatorCoordinatorCheckpointContext#afterSourceBarrierInjection```方法重新打开```OperatorEventValve```
 
 ### 初始化checkpoint
 
@@ -644,7 +601,7 @@ final class OperatorCoordinatorCheckpoints {
 ```
 </details>
 
-最终会执行每个算子协调器的```OperatorCoordinatorCheckpointContext#checkpointCoordinator```方法（```OperatorCoordinatorHolder```是该接口的唯一实现类）：
+首先执行每个算子协调器的```OperatorCoordinatorCheckpointContext#checkpointCoordinator```方法得到每个算子协调器的ack，然后将异步结果转换成算子协调器快照```CoordinatorSnapshot```（包含协调器上下文、以及由算子ID字符串和算子协调器ack的checkpoint ID字节数组组成的字节流句柄），最后将所有的快照合并成```AllCoordinatorSnapshots```。其中算子协调器ack的过程如下：
 
 ```java
 // OperatorCoordinatorHolder.class第202行
@@ -681,9 +638,153 @@ private void checkpointCoordinatorInternal(final long checkpointId, final Comple
 }
 ```
 
+这部分的实际执行顺序是如下：
+- ```eventValve```标记checkpoint ID
+- 算子协调器触发ack checkpoint（正常执行时```SourceCoordinator#checkpointCoordinator```在```CompletableFuture```中返回checkpoint ID的byte数组，否则抛出异常）
+- ```eventValue```收到ack，关闭阀
 
+```OperatorEventValve```是一个从```OperatorCoordinator```（JobManager侧）向```OperatorEventHandle```（Operator侧）发送算子事件的控制器，决定了算子事件实际是发出还是在阀中缓存（待阀打开后再发出）。
 
-## Barrier
+### 插入Barrier
+
+当上述两个步骤都正确完成后，```CheckpointCoordinator```通过```snapshotTaskState```方法调用RPC通知Source算子向数据流中插入Barrier。跟踪```snapshotTaskState```方法内的方法调用栈，其实际插入Barrier的执行部分为```SubtaskCheckpointCoordinatorImpl#checkpointState```（所有的checkpoint操作均由checkpointCoordinator发起，job级别是CheckpointCoordinator，task级别是SubtaskCheckpointCoordinator(Impl)）：
+
+- ```CheckpointCoordinator#snapshotTaskState```
+- ```Execution#triggerCheckpoint``` or ```Execution#triggerSynchronousSavepoint```
+- ```Execution#triggerCheckpointHelper```
+- ```RpcTaskManagerGateway#triggerCheckpoint```
+- ```TaskExecutor#triggerCheckpoint```
+- ```Task#triggerCheckpointBarrier```
+- ```StreamTask#triggerCheckpointAsync```
+- ```StreamTask#triggerCheckpoint```（在这一步初始化checkpoint）
+- ```StreamTask#performCheckpoint```
+- ```SubtaskCheckpointCoordinatorImpl#checkpointState```
+
+```java
+// SubtaskCheckpointCoordinatorImpl.class第216行
+public void checkpointState(
+		CheckpointMetaData metadata,
+		CheckpointOptions options,
+		CheckpointMetrics metrics,
+		OperatorChain<?, ?> operatorChain,
+		Supplier<Boolean> isCanceled) throws Exception {
+
+	checkNotNull(options);
+	checkNotNull(metrics);
+
+	// All of the following steps happen as an atomic step from the perspective of barriers and
+	// records/watermarks/timers/callbacks.
+	// We generally try to emit the checkpoint barrier as soon as possible to not affect downstream
+	// checkpoint alignments
+
+	if (lastCheckpointId >= metadata.getCheckpointId()) {
+		LOG.info("Out of order checkpoint barrier (aborted previously?): {} >= {}", lastCheckpointId, metadata.getCheckpointId());
+		channelStateWriter.abort(metadata.getCheckpointId(), new CancellationException(), true);
+		checkAndClearAbortedStatus(metadata.getCheckpointId());
+		return;
+	}
+
+	// Step (0): Record the last triggered checkpointId and abort the sync phase of checkpoint if necessary.
+	lastCheckpointId = metadata.getCheckpointId();
+	if (checkAndClearAbortedStatus(metadata.getCheckpointId())) {
+		// broadcast cancel checkpoint marker to avoid downstream back-pressure due to checkpoint barrier align.
+		operatorChain.broadcastEvent(new CancelCheckpointMarker(metadata.getCheckpointId()));
+		LOG.info("Checkpoint {} has been notified as aborted, would not trigger any checkpoint.", metadata.getCheckpointId());
+		return;
+	}
+
+	// Step (1): Prepare the checkpoint, allow operators to do some pre-barrier work.
+	//           The pre-barrier work should be nothing or minimal in the common case.
+	operatorChain.prepareSnapshotPreBarrier(metadata.getCheckpointId());
+
+	// Step (2): Send the checkpoint barrier downstream
+	operatorChain.broadcastEvent(
+		new CheckpointBarrier(metadata.getCheckpointId(), metadata.getTimestamp(), options),
+		options.isUnalignedCheckpoint());
+
+	// Step (3): Prepare to spill the in-flight buffers for input and output
+	if (options.isUnalignedCheckpoint()) {
+		prepareInflightDataSnapshot(metadata.getCheckpointId());
+	}
+
+	// Step (4): Take the state snapshot. This should be largely asynchronous, to not impact progress of the
+	// streaming topology
+
+	Map<OperatorID, OperatorSnapshotFutures> snapshotFutures = new HashMap<>(operatorChain.getNumberOfOperators());
+	try {
+		if (takeSnapshotSync(snapshotFutures, metadata, metrics, options, operatorChain, isCanceled)) {
+			finishAndReportAsync(snapshotFutures, metadata, metrics, options);
+		} else {
+			cleanup(snapshotFutures, metadata, metrics, new Exception("Checkpoint declined"));
+		}
+	} catch (Exception ex) {
+		cleanup(snapshotFutures, metadata, metrics, ex);
+		throw ex;
+	}
+}
+```
+
+具体发出Barrier的过程如下：
+1. 向下游算子广播丢弃上一个checkpoint的事件```CancelCheckpointMarker```。注意```operatorChain.broadcastEvent```虽然和Watermark、数据元素使用了同一个```RecordWriterOutput```，但走的不是同一个路径（Watermark、数据元素等```StreamElement```使用的是XXXemit方法）
+2. 告知Source以及和Source链接在一起的所有算子准备Barrier前的快照（在AbstractStreamOperator中该过程是不做任何事情的，没有发现哪个算子override了该方法）
+3. 向下游算子广播Barrier事件```CheckpointBarrier```。
+4. 如果是Unaligned Barrier，对正在发送过程中的数据元素进行快照（见Unaligned Barrier章）
+5. 调用```takeSnapshotSync```方法对算子状态进行快照（见Snapshotting章），如果在这个步骤发生错误，清理失败的快照并向```channelStateWriter```发出checkpoint失败消息
+
+### 插入Barrier后处理
+
+在成功插入Barrier后，```CheckpointCoordinator```执行```OperatorCoordinatorCheckpointContext#afterSourceBarrierInjection```方法进行后处理，重新打开```OperatorEventValve```。
+
+```java
+// OperatorCoordinatorHolder.class第265行
+public void afterSourceBarrierInjection(long checkpointId) {
+	// this method is commonly called by the CheckpointCoordinator's executor thread (timer thread).
+
+	// we ideally want the scheduler main-thread to be the one that sends the blocked events
+	// however, we need to react synchronously here, to maintain consistency and not allow
+	// another checkpoint injection in-between (unlikely, but possible).
+	// fortunately, the event-sending goes pretty much directly to the RPC gateways, which are
+	// thread safe.
+
+	// this will automatically be fixed once the checkpoint coordinator runs in the
+	// scheduler's main thread executor
+	eventValve.openValveAndUnmarkCheckpoint();
+}
+
+// OperatorEventValve.class第149行
+public void openValveAndUnmarkCheckpoint() {
+	final ArrayList<FuturePair> futures;
+
+	// send all events under lock, so that no new event can sneak between
+	synchronized (lock) {
+		currentCheckpointId = NO_CHECKPOINT;
+
+		if (!shut) {
+			return;
+		}
+
+		futures = new ArrayList<>(blockedEvents.size());
+
+		for (List<BlockedEvent> eventsForTask : blockedEvents.values()) {
+			for (BlockedEvent blockedEvent : eventsForTask) {
+				final CompletableFuture<Acknowledge> ackFuture = eventSender.apply(blockedEvent.event, blockedEvent.subtask);
+				futures.add(new FuturePair(blockedEvent.future, ackFuture));
+			}
+		}
+		blockedEvents.clear();
+		shut = false;
+	}
+
+	// apply the logic on the future outside the lock, to be safe
+	for (FuturePair pair : futures) {
+		FutureUtils.forward(pair.ackFuture, pair.originalFuture);
+	}
+}
+```
+
+重新打开事件阀后，```OperatorEventValve```将所有缓冲的事件按顺序逐一发出。虽然使用CompletableFuture异步，但Flink底层的RPC机制保证了事件的顺序。
+
+## Barrier与Alignment
 
 ## Snapshotting
 
