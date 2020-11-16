@@ -34,19 +34,21 @@ DeepRec-torch是一个基于pytorch的推荐系统模型实现框架，提供了
 
 ## 更新历史
 
-2020/11/08 State(2): 状态的实现(下)
+2020/11/16 [State(3): Checkpointing(上)](/engineering/flink/state3.md)
 
-2020/11/07 State(1): 状态的实现(上)
+2020/11/08 [State(2): 状态的实现(下)](/engineering/flink/state2.md)
 
-2020/10/19 Window(3): 窗口的状态
+2020/11/07 [State(1): 状态的实现(上)](/engineering/flink/state1.md)
 
-2020/10/16 Window(2): 触发器与回收器
+2020/10/19 [Window(3): 窗口的状态](/engineering/flink/window3.md)
 
-2020/10/15 Window(1): 窗口的分配
+2020/10/16 [Window(2): 触发器与回收器](/engineering/flink/window2.md)
 
-2020/10/13 Time & Watermark(2): Watermark的传播与处理
+2020/10/15 [Window(1): 窗口的分配](/engineering/flink/window1.md)
 
-2020/10/11 Time & Watermark(1): 概念与Watermark的生成
+2020/10/13 [Time & Watermark(2): Watermark的传播与处理](/engineering/flink/time2.md)
+
+2020/10/11 [Time & Watermark(1): 概念与Watermark的生成](/engineering/flink/time1.md)
 
 ---
 Powered by [docsify](https://docsify.js.org/)

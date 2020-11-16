@@ -1,5 +1,9 @@
 # 更新历史
 
+#### 2020/11/16
+- State(3): Checkpointing(上) （开始checkpointing）（全部完成）
+- 将State(3)中剩余章节的内容移动到State(4): Checkpointing(下)中
+
 #### 2020/11/15
 - State(3): Checkpointing(上) 第一部分（相关概念、初始化checkpoint元数据、Master钩子）
 

@@ -784,12 +784,7 @@ public void openValveAndUnmarkCheckpoint() {
 
 重新打开事件阀后，```OperatorEventValve```将所有缓冲的事件按顺序逐一发出。虽然使用CompletableFuture异步，但Flink底层的RPC机制保证了事件的顺序。
 
-## Barrier与Alignment
-
-## Snapshotting
-
-## 完成checkpoint
-
-## Unaligned Barrier
-
 ## 参考文献
+
+1. [Stateful Stream Processing](https://ci.apache.org/projects/flink/flink-docs-release-1.11/concepts/stateful-stream-processing.html)
+2. [流式计算系统系列（1）：恰好一次处理](https://zhuanlan.zhihu.com/p/102607983)
