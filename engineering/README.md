@@ -7,6 +7,6 @@
 3. [Window(1): 窗口的分配](/engineering/flink/window1.md)
 4. [Window(2): 触发器与回收器](/engineering/flink/window2.md)
 5. [Window(3): 窗口的状态](/engineering/flink/window3.md)
-6. [State(1): 状态的实现（上）](/engineering/flink/state1.md)
-7. [State(2): 状态的实现（下）](/engineering/flink/state2.md)
+6. [State(1): 状态的实现(上)](/engineering/flink/state1.md)
+7. [State(2): 状态的实现(下)](/engineering/flink/state2.md)
 8. [State(3): Checkpointing(上)](/engineering/flink/state3.md)

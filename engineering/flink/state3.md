@@ -5,6 +5,8 @@
 
 ## 相关概念
 
+Checkpoint是Flink容错机制的核心。在Checkpoint过程中，Flink算子会生成算子中状态的快照（snapshotting）并存储到状态后端中；在算子从故障中恢复时，可以通过快照恢复故障前的状态，从而实现流式处理的Exactly-Once或At-Least-Once语义。状态快照由数据流中的Barrier触发。在Flink运行时，数据源会定期向数据流中插入Barrier，当算子收到Barrier时，即开始进行状态快照。Flink在1.11版本加入了Unaligned Checkpointing机制，允许具有多个上游的算子在全部Barrier到达之前进行Checkpoint流程。Flink的Checkpoint机制的理论基础在[Lightweight Asynchronous Snapshots for Distributed Dataflows](https://arxiv.org/abs/1506.08603)中进行了详细解释，该机制由[Chandy-Lamport算法](https://www.microsoft.com/en-us/research/publication/distributed-snapshots-determining-global-states-distributed-system/?from=http%3A%2F%2Fresearch.microsoft.com%2Fen-us%2Fum%2Fpeople%2Flamport%2Fpubs%2Fchandy.pdf)启发得到（在加入Unaligned Checkpointing后更接近Chandy-Lamport算法了）
+
 ## 开始Checkpointing
 
 系统的Checkpointing由JobManager中的```CheckpointCoordinator#triggerCheckpoint(CheckpointProperties, String, boolean, boolean)```方法启动。如果系统设置了```env.enableCheckpointing(long interval)```，```triggerCheckpoint```方法会由定时任务根据设置的间隔触发```triggerCheckpoint(boolean)```；同时用户可以通过手动启动一个savepoint来触发checkpointing（```triggerSavepointInternal```方法）。
