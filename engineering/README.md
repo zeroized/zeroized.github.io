@@ -10,3 +10,4 @@
 6. [State(1): 状态的实现(上)](/engineering/flink/state1.md)
 7. [State(2): 状态的实现(下)](/engineering/flink/state2.md)
 8. [State(3): Checkpointing(上)](/engineering/flink/state3.md)
+9. [State(4): Checkpointing(下)](/engineering/flink/state4.md)

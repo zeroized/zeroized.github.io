@@ -1,5 +1,8 @@
 # 更新历史
 
+#### 2020/11/17
+- State(4): Checkpointing(下) 第一部分前半段（算子收到Barrier的checkpointing和abort流程，不包括barrier处理流程）
+
 #### 2020/11/16
 - State(3): Checkpointing(上) （开始checkpointing）（全部完成）
 - 将State(3)中剩余章节的内容移动到State(4): Checkpointing(下)中
