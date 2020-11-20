@@ -656,8 +656,8 @@ private void checkpointCoordinatorInternal(final long checkpointId, final Comple
 - ```TaskExecutor#triggerCheckpoint```
 - ```Task#triggerCheckpointBarrier```
 - ```StreamTask#triggerCheckpointAsync```
-- ```StreamTask#triggerCheckpoint```（在这一步初始化checkpoint）
-- ```StreamTask#performCheckpoint```
+- ```StreamTask#triggerCheckpoint```（在这一步初始化算子checkpoint）
+- ```StreamTask#performCheckpoint```（算子Checkpointing开始）
 - ```SubtaskCheckpointCoordinatorImpl#checkpointState```
 
 ```java
@@ -725,7 +725,7 @@ public void checkpointState(
 ```
 
 具体发出Barrier的过程如下：
-1. 向下游算子广播丢弃上一个checkpoint的事件```CancelCheckpointMarker```。注意```operatorChain.broadcastEvent```虽然和Watermark、数据元素使用了同一个```RecordWriterOutput```，但走的不是同一个路径（Watermark、数据元素等```StreamElement```使用的是XXXemit方法）
+1. 如果上一个checkpoint是失败的checkpoint（```abortedCheckpointIds```中存在上一个checkpoint id），向下游算子广播中止上一个checkpoint的事件```CancelCheckpointMarker```。注意```operatorChain.broadcastEvent```虽然和Watermark、数据元素使用了同一个```RecordWriterOutput```，但走的不是同一个路径（Watermark、数据元素等```StreamElement```使用的是XXXemit方法）
 2. 告知Source以及和Source链接在一起的所有算子准备Barrier前的快照（在AbstractStreamOperator中该过程是不做任何事情的，没有发现哪个算子override了该方法）
 3. 向下游算子广播Barrier事件```CheckpointBarrier```。
 4. 如果是Unaligned Barrier，对正在发送过程中的数据元素进行快照（见Unaligned Barrier章）

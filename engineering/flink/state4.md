@@ -10,6 +10,7 @@
 算子收到Barrier并开始处理的流程可以认为是从```CheckpointedInputGate#pollNext```开始的：
 
 ```java
+// CheckpointedInputGate.class第77行
 public Optional<BufferOrEvent> pollNext() throws Exception {
 	while (true) {
 		Optional<BufferOrEvent> next = inputGate.pollNext();
@@ -50,6 +51,7 @@ public Optional<BufferOrEvent> pollNext() throws Exception {
 <summary>CheckpointBarrierHandler</summary>
 
 ```java
+// CheckpointBarrierHandler.class
 public abstract class CheckpointBarrierHandler implements Closeable {
 
 	/** The listener to be notified on complete checkpoints. */
@@ -156,11 +158,12 @@ public abstract class CheckpointBarrierHandler implements Closeable {
 </details>
 
 在通知算子checkpointing（```notifyCheckpoint```方法）后，会调用```StreamTask#triggerCheckpointOnBarrier```方法，然后执行```StreamTask#performCheckpoint```流程（与前一篇的插入Barrier节中的调用栈倒数第二层开始一致，按照5步流程向下游发出Barrier、快照算子自己并通知```CheckpointCoordinator```）。
-在通知丢弃checkpoint时，调用```SubtaskCheckpointCoordinator#abortCheckpointOnBarrier```方法通知```CheckpointCoordinator```取消checkpointing，并向下游发出取消checkpoint的标记```CancelCheckpointMarker```。
+在通知中止checkpoint时，调用```SubtaskCheckpointCoordinator#abortCheckpointOnBarrier```方法通知```CheckpointCoordinator```取消checkpointing，并向下游发出取消checkpoint的标记```CancelCheckpointMarker```。
 
 在不同的语义级别和不同的checkpoint设置下，在```CheckpointedInputGate```中会使用不同的```CheckpointBarrierHandler```，具体使用哪一个由```InputProcessorUtils#createCheckpointBarrierHandle```决定：
 
 ```java
+// InputProcessorUtils.class第98行
 private static CheckpointBarrierHandler createCheckpointBarrierHandler(
 		StreamConfig config,
 		InputGate[] inputGates,
@@ -193,236 +196,180 @@ private static CheckpointBarrierHandler createCheckpointBarrierHandler(
 
 ### CheckpointBarrierTracker
 
+```CheckpointBarrierTracker```仅追踪Barrier并触发算子checkpointing，不会阻塞收到Barrier的通道（即上游算子partition/subpartition），因此只能保证AT_LEAST_ONCE语义。在源代码的类注释中对这部分进行了简介：
+
 >  The {@link CheckpointBarrierTracker} keeps track of what checkpoint barriers have been received from which input channels. Once it has observed all checkpoint barriers for a checkpoint ID, it notifies its listener of a completed checkpoint.
 >
 > Unlike the {@link CheckpointBarrierAligner}, the BarrierTracker does not block the input channels that have sent barriers, so it cannot be used to gain "exactly-once" processing guarantees. It can, however, be used to gain "at least once" processing guarantees.
 >
 > NOTE: This implementation strictly assumes that newer checkpoints have higher checkpoint IDs.
 
-<details>
-<summary>CheckpointBarrierTracker</summary>
+#### 处理CheckpointBarrier
+
+```CheckpointBarrierTracker```仅仅是追踪收到的Barrier通道，通过假设到来的checkpoint总是具有更大的id（因为不会阻塞通道，因此先发出的checkpoint在理论上总是更早到），它可以不用判断checkpoint的id而直接进行处理，其处理过程也仅是触发算子checkpointing和计数。由于```CheckpointBarrierTracker```不会阻塞收到Barrier的通道，在```processBarrier```方法中并没有对```InputChannelInfo```进行任何操作，只是简单的记录了一个日志（在debug模式下）：
 
 ```java
-public class CheckpointBarrierTracker extends CheckpointBarrierHandler {
+// CheckpointBarrierTracker.class第79行
+public void processBarrier(CheckpointBarrier receivedBarrier, InputChannelInfo channelInfo) throws Exception {
+	final long barrierId = receivedBarrier.getId();
 
-	private static final Logger LOG = LoggerFactory.getLogger(CheckpointBarrierTracker.class);
-
-	/**
-	 * The tracker tracks a maximum number of checkpoints, for which some, but not all barriers
-	 * have yet arrived.
-	 */
-	private static final int MAX_CHECKPOINTS_TO_TRACK = 50;
-
-	// ------------------------------------------------------------------------
-
-	/**
-	 * The number of channels. Once that many barriers have been received for a checkpoint, the
-	 * checkpoint is considered complete.
-	 */
-	private final int totalNumberOfInputChannels;
-
-	/**
-	 * All checkpoints for which some (but not all) barriers have been received, and that are not
-	 * yet known to be subsumed by newer checkpoints.
-	 */
-	private final ArrayDeque<CheckpointBarrierCount> pendingCheckpoints;
-
-	/** The highest checkpoint ID encountered so far. */
-	private long latestPendingCheckpointID = -1;
-
-	public CheckpointBarrierTracker(int totalNumberOfInputChannels, AbstractInvokable toNotifyOnCheckpoint) {
-		super(toNotifyOnCheckpoint);
-		this.totalNumberOfInputChannels = totalNumberOfInputChannels;
-		this.pendingCheckpoints = new ArrayDeque<>();
+	// fast path for single channel trackers
+	if (totalNumberOfInputChannels == 1) {
+		notifyCheckpoint(receivedBarrier, 0);
+		return;
 	}
 
-	public void processBarrier(CheckpointBarrier receivedBarrier, InputChannelInfo channelInfo) throws Exception {
-		final long barrierId = receivedBarrier.getId();
+	// general path for multiple input channels
+	if (LOG.isDebugEnabled()) {
+		LOG.debug("Received barrier for checkpoint {} from channel {}", barrierId, channelInfo);
+	}
 
-		// fast path for single channel trackers
-		if (totalNumberOfInputChannels == 1) {
-			notifyCheckpoint(receivedBarrier, 0);
-			return;
+	// find the checkpoint barrier in the queue of pending barriers
+	CheckpointBarrierCount barrierCount = null;
+	int pos = 0;
+
+	for (CheckpointBarrierCount next : pendingCheckpoints) {
+		if (next.checkpointId == barrierId) {
+			barrierCount = next;
+			break;
 		}
+		pos++;
+	}
 
-		// general path for multiple input channels
-		if (LOG.isDebugEnabled()) {
-			LOG.debug("Received barrier for checkpoint {} from channel {}", barrierId, channelInfo);
-		}
-
-		// find the checkpoint barrier in the queue of pending barriers
-		CheckpointBarrierCount barrierCount = null;
-		int pos = 0;
-
-		for (CheckpointBarrierCount next : pendingCheckpoints) {
-			if (next.checkpointId == barrierId) {
-				barrierCount = next;
-				break;
+	if (barrierCount != null) {
+		// add one to the count to that barrier and check for completion
+		int numBarriersNew = barrierCount.incrementBarrierCount();
+		if (numBarriersNew == totalNumberOfInputChannels) {
+			// checkpoint can be triggered (or is aborted and all barriers have been seen)
+			// first, remove this checkpoint and all all prior pending
+			// checkpoints (which are now subsumed)
+			for (int i = 0; i <= pos; i++) {
+				pendingCheckpoints.pollFirst();
 			}
-			pos++;
-		}
 
-		if (barrierCount != null) {
-			// add one to the count to that barrier and check for completion
-			int numBarriersNew = barrierCount.incrementBarrierCount();
-			if (numBarriersNew == totalNumberOfInputChannels) {
-				// checkpoint can be triggered (or is aborted and all barriers have been seen)
-				// first, remove this checkpoint and all all prior pending
-				// checkpoints (which are now subsumed)
-				for (int i = 0; i <= pos; i++) {
-					pendingCheckpoints.pollFirst();
+			// notify the listener
+			if (!barrierCount.isAborted()) {
+				if (LOG.isDebugEnabled()) {
+					LOG.debug("Received all barriers for checkpoint {}", barrierId);
 				}
 
-				// notify the listener
-				if (!barrierCount.isAborted()) {
-					if (LOG.isDebugEnabled()) {
-						LOG.debug("Received all barriers for checkpoint {}", barrierId);
-					}
-
-					notifyCheckpoint(receivedBarrier, 0);
-				}
-			}
-		}
-		else {
-			// first barrier for that checkpoint ID
-			// add it only if it is newer than the latest checkpoint.
-			// if it is not newer than the latest checkpoint ID, then there cannot be a
-			// successful checkpoint for that ID anyways
-			if (barrierId > latestPendingCheckpointID) {
-				markCheckpointStart(receivedBarrier.getTimestamp());
-				latestPendingCheckpointID = barrierId;
-				pendingCheckpoints.addLast(new CheckpointBarrierCount(barrierId));
-
-				// make sure we do not track too many checkpoints
-				if (pendingCheckpoints.size() > MAX_CHECKPOINTS_TO_TRACK) {
-					pendingCheckpoints.pollFirst();
-				}
+				notifyCheckpoint(receivedBarrier, 0);
 			}
 		}
 	}
+	else {
+		// first barrier for that checkpoint ID
+		// add it only if it is newer than the latest checkpoint.
+		// if it is not newer than the latest checkpoint ID, then there cannot be a
+		// successful checkpoint for that ID anyways
+		if (barrierId > latestPendingCheckpointID) {
+			markCheckpointStart(receivedBarrier.getTimestamp());
+			latestPendingCheckpointID = barrierId;
+			pendingCheckpoints.addLast(new CheckpointBarrierCount(barrierId));
 
-	@Override
-	public void processCancellationBarrier(CancelCheckpointMarker cancelBarrier) throws Exception {
-		final long checkpointId = cancelBarrier.getCheckpointId();
-
-		if (LOG.isDebugEnabled()) {
-			LOG.debug("Received cancellation barrier for checkpoint {}", checkpointId);
-		}
-
-		// fast path for single channel trackers
-		if (totalNumberOfInputChannels == 1) {
-			notifyAbortOnCancellationBarrier(checkpointId);
-			return;
-		}
-
-		// -- general path for multiple input channels --
-
-		// find the checkpoint barrier in the queue of pending barriers
-		// while doing this we "abort" all checkpoints before that one
-		CheckpointBarrierCount cbc;
-		while ((cbc = pendingCheckpoints.peekFirst()) != null && cbc.checkpointId() < checkpointId) {
-			pendingCheckpoints.removeFirst();
-
-			if (cbc.markAborted()) {
-				// abort the subsumed checkpoints if not already done
-				notifyAbortOnCancellationBarrier(cbc.checkpointId());
+			// make sure we do not track too many checkpoints
+			if (pendingCheckpoints.size() > MAX_CHECKPOINTS_TO_TRACK) {
+				pendingCheckpoints.pollFirst();
 			}
-		}
-
-		if (cbc != null && cbc.checkpointId() == checkpointId) {
-			// make sure the checkpoint is remembered as aborted
-			if (cbc.markAborted()) {
-				// this was the first time the checkpoint was aborted - notify
-				notifyAbortOnCancellationBarrier(checkpointId);
-			}
-
-			// we still count the barriers to be able to remove the entry once all barriers have been seen
-			if (cbc.incrementBarrierCount() == totalNumberOfInputChannels) {
-				// we can remove this entry
-				pendingCheckpoints.removeFirst();
-			}
-		}
-		else if (checkpointId > latestPendingCheckpointID) {
-			notifyAbortOnCancellationBarrier(checkpointId);
-
-			latestPendingCheckpointID = checkpointId;
-
-			CheckpointBarrierCount abortedMarker = new CheckpointBarrierCount(checkpointId);
-			abortedMarker.markAborted();
-			pendingCheckpoints.addFirst(abortedMarker);
-
-			// we have removed all other pending checkpoint barrier counts --> no need to check that
-			// we don't exceed the maximum checkpoints to track
-		} else {
-			// trailing cancellation barrier which was already cancelled
-		}
-	}
-
-	@Override
-	public void processEndOfPartition() throws Exception {
-		while (!pendingCheckpoints.isEmpty()) {
-			CheckpointBarrierCount barrierCount = pendingCheckpoints.removeFirst();
-			if (barrierCount.markAborted()) {
-				notifyAbort(barrierCount.checkpointId(),
-					new CheckpointException(CheckpointFailureReason.CHECKPOINT_DECLINED_INPUT_END_OF_STREAM));
-			}
-		}
-	}
-
-	public long getLatestCheckpointId() {
-		return pendingCheckpoints.isEmpty() ? -1 : pendingCheckpoints.peekLast().checkpointId();
-	}
-
-	public boolean isCheckpointPending() {
-		return !pendingCheckpoints.isEmpty();
-	}
-
-	/**
-	 * Simple class for a checkpoint ID with a barrier counter.
-	 */
-	private static final class CheckpointBarrierCount {
-
-		private final long checkpointId;
-
-		private int barrierCount;
-
-		private boolean aborted;
-
-		CheckpointBarrierCount(long checkpointId) {
-			this.checkpointId = checkpointId;
-			this.barrierCount = 1;
-		}
-
-		public long checkpointId() {
-			return checkpointId;
-		}
-
-		public int incrementBarrierCount() {
-			return ++barrierCount;
-		}
-
-		public boolean isAborted() {
-			return aborted;
-		}
-
-		public boolean markAborted() {
-			boolean firstAbort = !this.aborted;
-			this.aborted = true;
-			return firstAbort;
-		}
-
-		@Override
-		public String toString() {
-			return isAborted() ?
-				String.format("checkpointID=%d - ABORTED", checkpointId) :
-				String.format("checkpointID=%d, count=%d", checkpointId, barrierCount);
 		}
 	}
 }
 ```
-</details>
 
-## Snapshotting
+在单通道的情况下，```CheckpointBarrierTracker```直接通知算子启动checkpointing。
+
+在多通道的情况下，```CheckpointBarrierTracker```会维护一个名为```pendingCheckpoints```、正向按照checkpoint id升序的双向队列，其元素保存了checkpoint id和该checkpoint id已到达的Barriers的计数器。当一个Barrier到达时，根据Barrier的id去```pendingCheckpoints```中寻找对应的checkpoint并记录其序号。根据找到与否进行后续的操作：
+- 如果找到对应的checkpoint，将其计数器加一。如果此时计数器达到了最大通道数，即所有通道的Barrier都已经到达（在不发生错误的理想情况下），将```pendingCheckpoints```队列中排在该checkpoint前的全部中止，然后触发算子checkpointing（如果这个checkpoint没有被标记为已中止）。
+- 如果没有找到对应的checkpoint，首先判断该checkpoint是否比队列最后一个checkpoint晚，满足条件则往队列最后添加该checkpoint（如果队列满了则移除队头）；如果不满足则说明这个checkpoint是异常情况，无视这个checkpoint不做任何处理。
+
+简单总结一下，整个checkpoint能够不出现任何差错需要的前提包括以下3点：
+1. 一个通道中不能有重复的Barrier（重复的Barrier会导致计数器会比所有通道的Barrier都到达之前触发）
+2. 早发出的Barrier总是更早到（如果后发出的Barrier2早于Barrier1到达算子，checkpoint1就会被无视）
+3. checkpointing的到达速度不能过快（过快会导致新的checkpoint频繁“挤掉”最早的checkpoint，使不同通道间允许的延迟时间缩短，增加触发checkpointing的难度）
+
+#### 处理CancellationBarrier
+
+在处理中止checkpoint的Barrier时，```CheckpointBarrierTracker```依旧以所有Barrier按照顺序到达为前提：
+
+```java
+public void processCancellationBarrier(CancelCheckpointMarker cancelBarrier) throws Exception {
+	final long checkpointId = cancelBarrier.getCheckpointId();
+
+	if (LOG.isDebugEnabled()) {
+		LOG.debug("Received cancellation barrier for checkpoint {}", checkpointId);
+	}
+
+	// fast path for single channel trackers
+	if (totalNumberOfInputChannels == 1) {
+		notifyAbortOnCancellationBarrier(checkpointId);
+		return;
+	}
+
+	// -- general path for multiple input channels --
+
+	// find the checkpoint barrier in the queue of pending barriers
+	// while doing this we "abort" all checkpoints before that one
+	CheckpointBarrierCount cbc;
+	while ((cbc = pendingCheckpoints.peekFirst()) != null && cbc.checkpointId() < checkpointId) {
+		pendingCheckpoints.removeFirst();
+
+		if (cbc.markAborted()) {
+			// abort the subsumed checkpoints if not already done
+			notifyAbortOnCancellationBarrier(cbc.checkpointId());
+		}
+	}
+
+	if (cbc != null && cbc.checkpointId() == checkpointId) {
+		// make sure the checkpoint is remembered as aborted
+		if (cbc.markAborted()) {
+			// this was the first time the checkpoint was aborted - notify
+			notifyAbortOnCancellationBarrier(checkpointId);
+		}
+
+		// we still count the barriers to be able to remove the entry once all barriers have been seen
+		if (cbc.incrementBarrierCount() == totalNumberOfInputChannels) {
+			// we can remove this entry
+			pendingCheckpoints.removeFirst();
+		}
+	}
+	else if (checkpointId > latestPendingCheckpointID) {
+		notifyAbortOnCancellationBarrier(checkpointId);
+
+		latestPendingCheckpointID = checkpointId;
+
+		CheckpointBarrierCount abortedMarker = new CheckpointBarrierCount(checkpointId);
+		abortedMarker.markAborted();
+		pendingCheckpoints.addFirst(abortedMarker);
+
+		// we have removed all other pending checkpoint barrier counts --> no need to check that
+		// we don't exceed the maximum checkpoints to track
+	} else {
+		// trailing cancellation barrier which was already cancelled
+	}
+}
+```
+
+在单通道的情况下，直接触发通知算子中止checkpoint。
+
+在多通道的情况下，```CheckpointBarrierTracker```将正向遍历checkpoint等待队列，逐项移除等待的checkpoint直到找到真正待中止的那一个：
+- 如果找到了对应的checkpoint，将其标记为```aborted```状态并执行中止。为了保证确实中止了该checkpoint，这个操作会执行两遍。此时这个checkpoint不会从队列中移除，直到该checkpoint对应的所有Barrier都到达为止才会被移除。
+- 如果没有找到对应的checkpoint，且待取消的checkpoint id比原先队尾的更大，直接执行中止，然后将待中止的checkpoint标记为```aborted```然后放到```pendingCheckpoints```队头（此时队列已经被清空，加入后队列中只有这一个元素）；如果checkpoint id比原先队尾的小，则说明该checkpoint已经被中止了，不需要进行任何处理。
+
+### CheckpointBarrierAligner
+
+
+
+> {@link CheckpointBarrierAligner} keep tracks of received {@link CheckpointBarrier} on given channels and controls the alignment, by deciding which channels should be blocked and when to release blocked channels.
+
+
+
+#### 处理CheckpointBarrier
+
+## 算子Checkpointing与中止
+
+### 算子Checkpointing
+
+### 中止checkpoint
 
 ## 完成checkpoint
 
