@@ -1,5 +1,8 @@
 # 更新历史
 
+#### 2020/11/21
+- State(4): Checkpointing(下) 第一部分下（CheckpointBarrierAligner的Barrier处理流程）
+
 #### 2020/11/20
 - State(4): Checkpointing(下) 第一部分中（CheckpointBarrierTracker的Barrier处理流程）
 - 修正State(3)(4)中的一些翻译错误和描述错误

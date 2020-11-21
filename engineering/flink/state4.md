@@ -192,7 +192,7 @@ private static CheckpointBarrierHandler createCheckpointBarrierHandler(
 }
 ```
 
-可以看到，在```AT_LEAST_ONCE```语义下，Barrier由```CheckpointBarrierTracker```处理；在EXACTLY_ONCE语义下，Aligned Barrier由```CheckpointBarrierAligner```处理，Unaligned Barrier由```AlternatingCheckpointBarrierHandler```，其中同时包含```CheckpointBarrierAligner```和```CheckpointBarrierUnaligner```。下面我们逐一介绍这三种情况。
+可以看到，在```AT_LEAST_ONCE```语义下，Barrier由```CheckpointBarrierTracker```处理；在EXACTLY_ONCE语义下，Aligned Barrier由```CheckpointBarrierAligner```处理，Unaligned Barrier由```AlternatingCheckpointBarrierHandler```，其中同时包含```CheckpointBarrierAligner```和```CheckpointBarrierUnaligner```，当Barrier对应的是一般的checkpoint时（由定时任务定期触发），使用```CheckpointBarrierUnaligner```处理；当Barrier对应的是savepoint时，使用```CheckpointBarrierAligner```处理。下面我们逐一介绍上面提到的三种Barrier处理器。
 
 ### CheckpointBarrierTracker
 
@@ -357,15 +357,228 @@ public void processCancellationBarrier(CancelCheckpointMarker cancelBarrier) thr
 
 ### CheckpointBarrierAligner
 
-
+```CheckpointBarrierAligner```是最基本的Barrier对齐器，要求多通道中所有的通道都收到同一个checkpoint对应的Barrier才会触发算子checkpointing，否则会阻塞已收到Barrier的通道（使其只缓存收到的数据元素而不进行消费）。源代码中的类注释对其介绍如下：
 
 > {@link CheckpointBarrierAligner} keep tracks of received {@link CheckpointBarrier} on given channels and controls the alignment, by deciding which channels should be blocked and when to release blocked channels.
 
-
-
 #### 处理CheckpointBarrier
 
-## 算子Checkpointing与中止
+由于```CheckpointBarrierAligner```会阻塞通道，因此其处理Barrier的逻辑相对```CheckpointBarrierTracker```更复杂，需要维护所有输入通道的状态，控制通道的阻塞和释放：
+
+```java
+// CheckpointBarrierAligner.class第128行
+public void processBarrier(CheckpointBarrier receivedBarrier, InputChannelInfo channelInfo) throws Exception {
+	final long barrierId = receivedBarrier.getId();
+
+	// fast path for single channel cases
+	if (totalNumberOfInputChannels == 1) {
+		resumeConsumption(channelInfo);
+		if (barrierId > currentCheckpointId) {
+			// new checkpoint
+			currentCheckpointId = barrierId;
+			notifyCheckpoint(receivedBarrier, latestAlignmentDurationNanos);
+		}
+		return;
+	}
+
+	// -- general code path for multiple input channels --
+
+	if (isCheckpointPending()) {
+		// this is only true if some alignment is already progress and was not canceled
+
+		if (barrierId == currentCheckpointId) {
+			// regular case
+			onBarrier(channelInfo);
+		}
+		else if (barrierId > currentCheckpointId) {
+			// we did not complete the current checkpoint, another started before
+			LOG.warn("{}: Received checkpoint barrier for checkpoint {} before completing current checkpoint {}. " +
+					"Skipping current checkpoint.",
+				taskName,
+				barrierId,
+				currentCheckpointId);
+
+			// let the task know we are not completing this
+			notifyAbort(currentCheckpointId,
+				new CheckpointException(
+					"Barrier id: " + barrierId,
+					CheckpointFailureReason.CHECKPOINT_DECLINED_SUBSUMED));
+
+			// abort the current checkpoint
+			releaseBlocksAndResetBarriers();
+
+			// begin a new checkpoint
+			beginNewAlignment(barrierId, channelInfo, receivedBarrier.getTimestamp());
+		}
+		else {
+			// ignore trailing barrier from an earlier checkpoint (obsolete now)
+			resumeConsumption(channelInfo);
+		}
+	}
+	else if (barrierId > currentCheckpointId) {
+		// first barrier of a new checkpoint
+		beginNewAlignment(barrierId, channelInfo, receivedBarrier.getTimestamp());
+	}
+	else {
+		// either the current checkpoint was canceled (numBarriers == 0) or
+		// this barrier is from an old subsumed checkpoint
+		resumeConsumption(channelInfo);
+	}
+
+	// check if we have all barriers - since canceled checkpoints always have zero barriers
+	// this can only happen on a non canceled checkpoint
+	if (numBarriersReceived + numClosedChannels == totalNumberOfInputChannels) {
+		// actually trigger checkpoint
+		if (LOG.isDebugEnabled()) {
+			LOG.debug("{}: Received all barriers, triggering checkpoint {} at {}.",
+				taskName,
+				receivedBarrier.getId(),
+				receivedBarrier.getTimestamp());
+		}
+
+		releaseBlocksAndResetBarriers();
+		notifyCheckpoint(receivedBarrier, latestAlignmentDurationNanos);
+	}
+}
+
+protected void beginNewAlignment(
+		long checkpointId,
+		InputChannelInfo channelInfo,
+		long checkpointTimestamp) throws IOException {
+	markCheckpointStart(checkpointTimestamp);
+	currentCheckpointId = checkpointId;
+	onBarrier(channelInfo);
+
+	startOfAlignmentTimestamp = System.nanoTime();
+
+	if (LOG.isDebugEnabled()) {
+		LOG.debug("{}: Starting stream alignment for checkpoint {}.", taskName, checkpointId);
+	}
+}
+
+/**
+ * Blocks the given channel index, from which a barrier has been received.
+ *
+ * @param channelInfo The channel to block.
+ */
+protected void onBarrier(InputChannelInfo channelInfo) throws IOException {
+	if (!blockedChannels.get(channelInfo)) {
+		blockedChannels.put(channelInfo, true);
+
+		numBarriersReceived++;
+
+		if (LOG.isDebugEnabled()) {
+			LOG.debug("{}: Received barrier from channel {}.", taskName, channelInfo);
+		}
+	}
+	else {
+		throw new IOException("Stream corrupt: Repeated barrier for same checkpoint on input " + channelInfo);
+	}
+}
+```
+
+在单通道的情况下，```CheckpointBarrierAligner```首先通知通道继续消费输入元素，然后判断到来的Barrier是否对应一个更新的checkpoint，如果是则触发算子checkpointing，否则无视这个Barrier。在单通道情况下```CheckpointBarrierAligner```不会阻塞通道（也没有必要阻塞通道）。
+
+在多通道的情况下，```CheckpointBarrierAligner```首先判断是否正在进行一个checkpoint（即等待多个通道中的Barrier对齐）并进行相应操作：
+- 如果正在进行一个checkpoint，且到来的Barrier就是该checkpoint的Barrier，阻塞该通道并将对齐计数器+1（如果收到了已经阻塞通道的Barrier，抛出一个重复Barrier的异常）；如果到来的Barrier id大于正在进行的checkpoint，通知算子中止checkpointing，并释放所有已阻塞的通道，然后启动一个新的checkpoint（重置checkpoint的时间和id、阻塞该Barrier对应的通道）；如果到来的Barrier id小于正在进行的checkpoint，无视这个Barrier并继续消费通道。
+- 如果没有正在进行的checkpoint，且到来的Barrier id比上一次的checkpoint id大，则启动一个新的checkpoint；如果比上一次的checkpoint id小，无视这个Barrier并继续消费通道。
+
+在完成Barrier的处理后，```CheckpointBarrierAligner```判断所有通道的Barrier是否都已经对齐（收到的Barrier数量+已关闭的通道数量=总通道数），如果所有的Barrier都已经对齐，释放所有已阻塞的通道然后触发算子checkpointing。
+
+#### 处理CancellationBarrier
+
+```CheckpointBarrierAligner```在处理中止checkpoint的Barrier时，思路和CheckpointBarrier基本是一致的，但无论是否正在进行checkpoint，实际的过程都差不太多：
+
+```java
+public void processCancellationBarrier(CancelCheckpointMarker cancelBarrier) throws Exception {
+	final long barrierId = cancelBarrier.getCheckpointId();
+
+	// fast path for single channel cases
+	if (totalNumberOfInputChannels == 1) {
+		if (barrierId > currentCheckpointId) {
+			// new checkpoint
+			currentCheckpointId = barrierId;
+			notifyAbortOnCancellationBarrier(barrierId);
+		}
+		return;
+	}
+
+	// -- general code path for multiple input channels --
+
+	if (isCheckpointPending()) {
+		// this is only true if some alignment is in progress and nothing was canceled
+
+		if (barrierId == currentCheckpointId) {
+			// cancel this alignment
+			if (LOG.isDebugEnabled()) {
+				LOG.debug("{}: Checkpoint {} canceled, aborting alignment.", taskName, barrierId);
+			}
+
+			releaseBlocksAndResetBarriers();
+			notifyAbortOnCancellationBarrier(barrierId);
+		}
+		else if (barrierId > currentCheckpointId) {
+			// we canceled the next which also cancels the current
+			LOG.warn("{}: Received cancellation barrier for checkpoint {} before completing current checkpoint {}. " +
+					"Skipping current checkpoint.",
+				taskName,
+				barrierId,
+				currentCheckpointId);
+
+			// this stops the current alignment
+			releaseBlocksAndResetBarriers();
+
+			// the next checkpoint starts as canceled
+			currentCheckpointId = barrierId;
+			startOfAlignmentTimestamp = 0L;
+			latestAlignmentDurationNanos = 0L;
+
+			notifyAbortOnCancellationBarrier(barrierId);
+		}
+
+		// else: ignore trailing (cancellation) barrier from an earlier checkpoint (obsolete now)
+
+	}
+	else if (barrierId > currentCheckpointId) {
+		// first barrier of a new checkpoint is directly a cancellation
+
+		// by setting the currentCheckpointId to this checkpoint while keeping the numBarriers
+		// at zero means that no checkpoint barrier can start a new alignment
+		currentCheckpointId = barrierId;
+
+		startOfAlignmentTimestamp = 0L;
+		latestAlignmentDurationNanos = 0L;
+
+		if (LOG.isDebugEnabled()) {
+			LOG.debug("{}: Checkpoint {} canceled, skipping alignment.", taskName, barrierId);
+		}
+
+		notifyAbortOnCancellationBarrier(barrierId);
+	}
+
+	// else: trailing barrier from either
+	//   - a previous (subsumed) checkpoint
+	//   - the current checkpoint if it was already canceled
+}
+```
+
+在单通道的情况下，```CheckpointBarrierAligner```直接通知算子中止checkpoint然后将checkpoint id记录下来（如果到来的```CancellationBarrier``` id比当前记录的checkpoint id更大）。
+
+在多通道的情况下，```CheckpointBarrierAligner```同样会根据是否正在进行checkpoint触发两种处理流程：
+- 正在进行checkpoint时，如果到来的Barrier就是正在对齐的checkpoint，直接释放所有阻塞的通道，然后通知算子中止checkpoint；如果到来的Barrier id大于正在对齐的checkpoint，同样释放所有阻塞的通道，将当前checkpoint id设置为待中止的id，然后通知算子中止checkpoint。
+- 没有进行checkpoint时，如果到来的Barrier id大于正在对齐的checkpoint，将当前checkpoint id设置为待中止的id，然后通知算子中止checkpoint；否则无视这个Barrier。
+
+### CheckpointBarrierUnaligner（施工中）
+
+```CheckpointBarrierUnaligner```在每个checkpoint的第一个Barrier到达时就触发算子checkpointing，并持续追踪后续的Barriers和Buffer。源代码中的类注释如下：
+
+> {@link CheckpointBarrierUnaligner} is used for triggering checkpoint while reading the first barrier and keeping track of the number of received barriers and consumed barriers.
+
+#### ThreadSafeUnaligner
+
+## 执行与中止checkpoint
+
+在前一篇State(3)中提到，算子的checkpointing由```StreamTask#performCheckpoint```方法开始，其中source算子由```StreamTask#triggerCheckpoint```触发，其他算子通过```CheckpointBarrierHandle#notifyCheckpoint```调用```StreamTask#triggerCheckpointOnBarrier```触发。而算子的checkpoint中止则是交由```SubtaskCheckpointCoordinatorImpl#abortCheckpointOnBarrier```执行。
 
 ### 算子Checkpointing
 
