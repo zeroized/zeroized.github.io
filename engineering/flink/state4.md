@@ -1,7 +1,7 @@
-# State(4): Checkpointing(下)
+# State(4): Checkpointing(中)
 2020/11/17
 
-前一篇[State(3): Checkpointing(上)](/engineering/flink/state3.md)介绍了checkpointing是如何开始的，包括```CheckpointCoordinator```启动checkpointing和```SubtaskCheckpointCoordinator```向下游发送Barrier。本篇将继续Checkpointing过程的分析，介绍算子收到Barrier后的响应、快照的执行过程以及算子完成checkpointing后向```CheckpointCoordinator``` ack的过程。最后将简单介绍Flink1.11版本新加入的Unaligned Barrier机制的实现。
+前一篇[State(3): Checkpointing(上)](/engineering/flink/state3.md)介绍了checkpointing是如何开始的，包括```CheckpointCoordinator```启动checkpointing和```SubtaskCheckpointCoordinator```向下游发送Barrier。本篇将继续Checkpointing过程的分析，介绍算子收到Barrier后的响应过程。
 
 注：源代码为Flink1.11.0版本
 
@@ -292,6 +292,7 @@ public void processBarrier(CheckpointBarrier receivedBarrier, InputChannelInfo c
 在处理中止checkpoint的Barrier时，```CheckpointBarrierTracker```依旧以所有Barrier按照顺序到达为前提：
 
 ```java
+// CheckpointBarrierTracker.class第145行
 public void processCancellationBarrier(CancelCheckpointMarker cancelBarrier) throws Exception {
 	final long checkpointId = cancelBarrier.getCheckpointId();
 
@@ -490,6 +491,7 @@ protected void onBarrier(InputChannelInfo channelInfo) throws IOException {
 ```CheckpointBarrierAligner```在处理中止checkpoint的Barrier时，思路和CheckpointBarrier基本是一致的，但无论是否正在进行checkpoint，实际的过程都差不太多：
 
 ```java
+// CheckpointBarrierAligner.class第238行
 public void processCancellationBarrier(CancelCheckpointMarker cancelBarrier) throws Exception {
 	final long barrierId = cancelBarrier.getCheckpointId();
 
@@ -576,17 +578,6 @@ public void processCancellationBarrier(CancelCheckpointMarker cancelBarrier) thr
 
 #### ThreadSafeUnaligner
 
-## 执行与中止checkpoint
-
-在前一篇State(3)中提到，算子的checkpointing由```StreamTask#performCheckpoint```方法开始，其中source算子由```StreamTask#triggerCheckpoint```触发，其他算子通过```CheckpointBarrierHandle#notifyCheckpoint```调用```StreamTask#triggerCheckpointOnBarrier```触发。而算子的checkpoint中止则是交由```SubtaskCheckpointCoordinatorImpl#abortCheckpointOnBarrier```执行。
-
-### 算子Checkpointing
-
-### 中止checkpoint
-
-## 完成checkpoint
-
-## Unaligned Barrier
 
 ## 参考文献
 

@@ -2,6 +2,7 @@
 
 #### 2020/11/21
 - State(4): Checkpointing(下) 第一部分下（CheckpointBarrierAligner的Barrier处理流程）
+- 将State(4)的篇名修改为 Checkpointing(中)，并将剩余章节内容移动到State(5)中
 
 #### 2020/11/20
 - State(4): Checkpointing(下) 第一部分中（CheckpointBarrierTracker的Barrier处理流程）
