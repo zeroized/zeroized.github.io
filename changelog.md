@@ -1,7 +1,7 @@
 # 更新历史
 
 #### 2020/11/22
-- State(5): Checkpointing(下) 第一部分（算子快照）
+- State(5): Checkpointing(下) （完成）
 
 #### 2020/11/21
 - State(4): Checkpointing(下) 第一部分下（CheckpointBarrierAligner的Barrier处理流程）
