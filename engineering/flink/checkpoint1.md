@@ -1,4 +1,4 @@
-# State(3): Checkpointing(上)
+# Checkpoint(1): 启动Checkpoint
 2020/11/15
 
 注：源代码为Flink1.11.0版本

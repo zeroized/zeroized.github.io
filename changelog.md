@@ -1,25 +1,28 @@
 # 更新历史
 
+#### 2020/12/08
+- 将关于checkpoint的三篇从state篇改为checkpoint篇
+
 #### 2020/11/22
-- State(5): Checkpointing(下) （完成）
+- Checkpoint(3): 执行与完成checkpoint （完成）
 
 #### 2020/11/21
-- State(4): Checkpointing(下) 第一部分下（CheckpointBarrierAligner的Barrier处理流程）
+- Checkpoint(2): 处理Barrier 第一部分下（CheckpointBarrierAligner的Barrier处理流程）
 - 将State(4)的篇名修改为 Checkpointing(中)，并将剩余章节内容移动到State(5)中
 
 #### 2020/11/20
-- State(4): Checkpointing(下) 第一部分中（CheckpointBarrierTracker的Barrier处理流程）
+- Checkpoint(2): 处理Barrier 第一部分中（CheckpointBarrierTracker的Barrier处理流程）
 - 修正State(3)(4)中的一些翻译错误和描述错误
 
 #### 2020/11/17
-- State(4): Checkpointing(下) 第一部分前半段（算子收到Barrier的checkpointing和abort流程，不包括barrier处理流程）
+- Checkpoint(2): 处理Barrier 第一部分前半段（算子收到Barrier的checkpointing和abort流程，不包括barrier处理流程）
 
 #### 2020/11/16
-- State(3): Checkpointing(上) （开始checkpointing）（全部完成）
-- 将State(3)中剩余章节的内容移动到State(4): Checkpointing(下)中
+- Checkpoint(1): 启动Checkpoint （开始checkpointing）（全部完成）
+- 将State(3)中剩余章节的内容移动到Checkpoint(2): 处理Barrier中
 
 #### 2020/11/15
-- State(3): Checkpointing(上) 第一部分（相关概念、初始化checkpoint元数据、Master钩子）
+- Checkpoint(1): 启动Checkpoint 第一部分（相关概念、初始化checkpoint元数据、Master钩子）
 
 #### 2020/11/08
 - State(2): 状态的实现(下) 第一部分（算子状态的初始化和获取、Broadcast状态）

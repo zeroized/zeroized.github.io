@@ -1,7 +1,7 @@
-# State(4): Checkpointing(中)
+# Checkpoint(2): 处理Barrier
 2020/11/17
 
-前一篇[State(3): Checkpointing(上)](/engineering/flink/state3.md)介绍了checkpointing是如何开始的，包括```CheckpointCoordinator```启动checkpointing和```SubtaskCheckpointCoordinator```向下游发送Barrier。本篇将继续Checkpointing过程的分析，介绍算子收到Barrier后的响应过程。
+前一篇[Checkpoint(1): 启动Checkpoint](/engineering/flink/checkpoint1.md)介绍了checkpointing是如何开始的，包括```CheckpointCoordinator```启动checkpointing和```SubtaskCheckpointCoordinator```向下游发送Barrier。本篇将继续Checkpointing过程的分析，介绍算子收到Barrier后的响应过程。
 
 注：源代码为Flink1.11.0版本
 
@@ -194,7 +194,7 @@ private static CheckpointBarrierHandler createCheckpointBarrierHandler(
 
 可以看到，在```AT_LEAST_ONCE```语义下，Barrier由```CheckpointBarrierTracker```处理；在EXACTLY_ONCE语义下，Aligned Barrier由```CheckpointBarrierAligner```处理，Unaligned Barrier由```AlternatingCheckpointBarrierHandler```，其中同时包含```CheckpointBarrierAligner```和```CheckpointBarrierUnaligner```，当Barrier对应的是一般的checkpoint时（由定时任务定期触发），使用```CheckpointBarrierUnaligner```处理；当Barrier对应的是savepoint时，使用```CheckpointBarrierAligner```处理。下面我们逐一介绍上面提到的三种Barrier处理器。
 
-### CheckpointBarrierTracker
+## CheckpointBarrierTracker
 
 ```CheckpointBarrierTracker```仅追踪Barrier并触发算子checkpointing，不会阻塞收到Barrier的通道（即上游算子partition/subpartition），因此只能保证AT_LEAST_ONCE语义。在源代码的类注释中对这部分进行了简介：
 
@@ -204,7 +204,7 @@ private static CheckpointBarrierHandler createCheckpointBarrierHandler(
 >
 > NOTE: This implementation strictly assumes that newer checkpoints have higher checkpoint IDs.
 
-#### 处理CheckpointBarrier
+### 处理CheckpointBarrier
 
 ```CheckpointBarrierTracker```仅仅是追踪收到的Barrier通道，通过假设到来的checkpoint总是具有更大的id（因为不会阻塞通道，因此先发出的checkpoint在理论上总是更早到），它可以不用判断checkpoint的id而直接进行处理，其处理过程也仅是触发算子checkpointing和计数。由于```CheckpointBarrierTracker```不会阻塞收到Barrier的通道，在```processBarrier```方法中并没有对```InputChannelInfo```进行任何操作，只是简单的记录了一个日志（在debug模式下）：
 
@@ -287,7 +287,7 @@ public void processBarrier(CheckpointBarrier receivedBarrier, InputChannelInfo c
 2. 早发出的Barrier总是更早到（如果后发出的Barrier2早于Barrier1到达算子，checkpoint1就会被无视）
 3. checkpointing的到达速度不能过快（过快会导致新的checkpoint频繁“挤掉”最早的checkpoint，使不同通道间允许的延迟时间缩短，增加触发checkpointing的难度）
 
-#### 处理CancellationBarrier
+### 处理CancellationBarrier
 
 在处理中止checkpoint的Barrier时，```CheckpointBarrierTracker```依旧以所有Barrier按照顺序到达为前提：
 
@@ -356,13 +356,13 @@ public void processCancellationBarrier(CancelCheckpointMarker cancelBarrier) thr
 - 如果找到了对应的checkpoint，将其标记为```aborted```状态并执行中止。为了保证确实中止了该checkpoint，这个操作会执行两遍。此时这个checkpoint不会从队列中移除，直到该checkpoint对应的所有Barrier都到达为止才会被移除。
 - 如果没有找到对应的checkpoint，且待取消的checkpoint id比原先队尾的更大，直接执行中止，然后将待中止的checkpoint标记为```aborted```然后放到```pendingCheckpoints```队头（此时队列已经被清空，加入后队列中只有这一个元素）；如果checkpoint id比原先队尾的小，则说明该checkpoint已经被中止了，不需要进行任何处理。
 
-### CheckpointBarrierAligner
+## CheckpointBarrierAligner
 
 ```CheckpointBarrierAligner```是最基本的Barrier对齐器，要求多通道中所有的通道都收到同一个checkpoint对应的Barrier才会触发算子checkpointing，否则会阻塞已收到Barrier的通道（使其只缓存收到的数据元素而不进行消费）。源代码中的类注释对其介绍如下：
 
 > {@link CheckpointBarrierAligner} keep tracks of received {@link CheckpointBarrier} on given channels and controls the alignment, by deciding which channels should be blocked and when to release blocked channels.
 
-#### 处理CheckpointBarrier
+### 处理CheckpointBarrier
 
 由于```CheckpointBarrierAligner```会阻塞通道，因此其处理Barrier的逻辑相对```CheckpointBarrierTracker```更复杂，需要维护所有输入通道的状态，控制通道的阻塞和释放：
 
@@ -486,7 +486,7 @@ protected void onBarrier(InputChannelInfo channelInfo) throws IOException {
 
 在完成Barrier的处理后，```CheckpointBarrierAligner```判断所有通道的Barrier是否都已经对齐（收到的Barrier数量+已关闭的通道数量=总通道数），如果所有的Barrier都已经对齐，释放所有已阻塞的通道然后触发算子checkpointing。
 
-#### 处理CancellationBarrier
+### 处理CancellationBarrier
 
 ```CheckpointBarrierAligner```在处理中止checkpoint的Barrier时，思路和CheckpointBarrier基本是一致的，但无论是否正在进行checkpoint，实际的过程都差不太多：
 
@@ -570,13 +570,13 @@ public void processCancellationBarrier(CancelCheckpointMarker cancelBarrier) thr
 - 正在进行checkpoint时，如果到来的Barrier就是正在对齐的checkpoint，直接释放所有阻塞的通道，然后通知算子中止checkpoint；如果到来的Barrier id大于正在对齐的checkpoint，同样释放所有阻塞的通道，将当前checkpoint id设置为待中止的id，然后通知算子中止checkpoint。
 - 没有进行checkpoint时，如果到来的Barrier id大于正在对齐的checkpoint，将当前checkpoint id设置为待中止的id，然后通知算子中止checkpoint；否则无视这个Barrier。
 
-### CheckpointBarrierUnaligner（施工中）
+## CheckpointBarrierUnaligner（施工中）
 
 ```CheckpointBarrierUnaligner```在每个checkpoint的第一个Barrier到达时就触发算子checkpointing，并持续追踪后续的Barriers和Buffer。源代码中的类注释如下：
 
 > {@link CheckpointBarrierUnaligner} is used for triggering checkpoint while reading the first barrier and keeping track of the number of received barriers and consumed barriers.
 
-#### ThreadSafeUnaligner
+### ThreadSafeUnaligner
 
 
 ## 参考文献

@@ -10,9 +10,9 @@
         * [Window(3): 窗口的状态](/engineering/flink/window3.md)
         * [State(1): 状态的实现(上)](/engineering/flink/state1.md)
         * [State(2): 状态的实现(下)](/engineering/flink/state2.md)
-        * [State(3): Checkpointing(上)](/engineering/flink/state3.md)
-        * [State(4): Checkpointing(中)](/engineering/flink/state4.md)
-        * [State(5): Checkpointing(下)](/engineering/flink/state5.md)
+        * [Checkpoint(1): 启动Checkpoint](/engineering/flink/checkpoint1.md)
+        * [Checkpoint(2): 处理Barrier](/engineering/flink/checkpoint2.md)
+        * [Checkpoint(3): 执行与完成checkpoint](/engineering/flink/checkpoint3.md)
 * [推荐系统](/rec/)
 * 摸鱼时间
 * [更新历史](changelog.md)

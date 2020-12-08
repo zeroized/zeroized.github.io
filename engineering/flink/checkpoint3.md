@@ -1,7 +1,7 @@
-# State(5): Checkpointing(下)
+# Checkpoint(3): 执行与完成checkpoint
 2020/11/21
 
-前两篇[State(3): Checkpointing(上)](/engineering/flink/state3.md)和[State(4): Checkpointing(下)](/engineering/flink/state5.md)中介绍了checkpoint的启动和Barrier的处理。本篇是State系列中关于checkpoint的最后一篇，将介绍checkpoint过程中剩余的两个流程：快照的执行过程以及算子完成checkpointing后向```CheckpointCoordinator``` ack的过程。最后将简单汇总Flink1.11版本新加入的Unaligned Barrier机制在每个checkpoint步骤中与aligned Barrier的不同之处。
+前两篇[Checkpoint(1): 启动Checkpoint](/engineering/flink/checkpoint1.md)和[Checkpoint(2): 处理Barrier](/engineering/flink/checkpoint3.md)中介绍了checkpoint的启动和Barrier的处理。本篇是State系列中关于checkpoint的最后一篇，将介绍checkpoint过程中剩余的两个流程：快照的执行过程以及算子完成checkpointing后向```CheckpointCoordinator``` ack的过程。最后将简单汇总Flink1.11版本新加入的Unaligned Barrier机制在每个checkpoint步骤中与aligned Barrier的不同之处。
 
 注：源代码为Flink1.11.0版本
 
@@ -246,7 +246,7 @@ void snapshotState(
 
 ### Unaligned算子快照（施工中）
 
-### 中止checkpoint
+## 中止checkpoint
 
 在两种情况下一个算子checkpoint会被中止：一种是当算子收到CancelCheckpointMarker时或是在checkpointing时发生错误；还有一种是收到中止checkpoint的通知（来自```CheckpointCoordinator```）。第一种情况下，```CheckpointCoordinator```并不知道
 
