@@ -1,5 +1,8 @@
 # 更新历史
 
+#### 2021/02/22
+- Resource Manager(1): Slot的分配与回收（完成）
+
 #### 2020/12/08
 - 将关于checkpoint的三篇从state篇改为checkpoint篇
 

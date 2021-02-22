@@ -34,6 +34,8 @@ DeepRec-torch是一个基于pytorch的推荐系统模型实现框架，提供了
 
 ## 更新历史
 
+2021/02/22 [Resource Manager(1): Slot的分配与回收](/engineering/flink/resource-manager1.md)
+
 2020/11/22 [Checkpoint(3): 执行与完成checkpoint](/engineering/flink/checkpoint3.md)
 
 2020/11/21 [Checkpoint(2): 处理Barrier](/engineering/flink/checkpoint2.md)
