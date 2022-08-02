@@ -58,4 +58,5 @@ DeepRec-torch是一个基于pytorch的推荐系统模型实现框架，提供了
 
 ---
 Powered by [docsify](https://docsify.js.org/)
-沪ICP备18018236号-1
+
+沪ICP备18018236号-1, 点击跳转链接：https://beian.miit.gov.cn
